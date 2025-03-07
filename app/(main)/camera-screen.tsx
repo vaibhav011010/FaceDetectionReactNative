@@ -1,5 +1,13 @@
 import React, { useRef, useEffect, useState } from "react";
-import { StyleSheet, View, Text, Image, Animated } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Text,
+  Image,
+  Animated,
+  TouchableOpacity,
+  ActivityIndicator,
+} from "react-native";
 import {
   Camera,
   useCameraDevice,
@@ -9,6 +17,7 @@ import {
 import { useFaceDetector } from "react-native-vision-camera-face-detector";
 import { Worklets } from "react-native-worklets-core";
 import { useRouter } from "expo-router";
+import { useFonts } from "expo-font";
 
 interface Face {
   bounds: {
@@ -219,17 +228,25 @@ const CameraScreen = (props: Props) => {
   const handleSubmit = () => {
     router.replace("/checkin-screen");
   };
+  // const [fontsLoaded] = useFonts({
+  //   "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
+  //   "OpenSans_Condensed-Regular": require("../../assets/fonts/OpenSans_Condensed-Regular.ttf"),
+  //   "OpenSans_Condensed-SemiBold": require("../../assets/fonts/OpenSans_Condensed-SemiBold.ttf"),
+  // });
+  // if (!fontsLoaded) {
+  //   return <ActivityIndicator size="large" color="#03045E" />;
+  // }
 
   return (
     <View style={styles.container}>
       {/* Debug overlay */}
-      <View style={styles.debugOverlay}>
+      {/* <View style={styles.debugOverlay}>
         <Text style={styles.debugText}>
           Faces: {faces.length} | Count: {countdown} | Active:{" "}
           {countdownInProgressRef.current ? "Yes" : "No"}
         </Text>
         <Text style={styles.debugText}>Status: {debugMsg}</Text>
-      </View>
+      </View> */}
 
       <View
         style={styles.cameraWrapper}
@@ -311,12 +328,12 @@ const CameraScreen = (props: Props) => {
       <View style={styles.bottomSection}>
         {capturedPhoto ? (
           <View style={styles.buttonContainer}>
-            <Text style={styles.resetText} onPress={resetCamera}>
-              Retry
-            </Text>
-            <Text style={styles.resetText} onPress={handleSubmit}>
-              Submit
-            </Text>
+            <TouchableOpacity style={styles.button} onPress={resetCamera}>
+              <Text style={styles.buttonText}>Retry</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.button} onPress={handleSubmit}>
+              <Text style={styles.buttonText}>Submit</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <Text style={styles.instructionText}>
@@ -395,14 +412,14 @@ const styles = StyleSheet.create({
   },
   noFaceText: {
     color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
+    fontSize: 18,
+    fontFamily: "OpenSans_Condensed-Bold",
     textAlign: "center",
-    backgroundColor: "rgba(255,0,0,0.7)",
+    backgroundColor: "rgba(255,0,0,0.5)",
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: 5,
   },
   countdownOverlay: {
     position: "absolute",
@@ -414,8 +431,8 @@ const styles = StyleSheet.create({
   },
   steadyText: {
     color: "white",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 15,
+    fontFamily: "OpenSans_Condensed-SemiBold",
     backgroundColor: "rgba(0,100,0,0.7)",
     paddingHorizontal: 20,
     paddingVertical: 8,
@@ -436,15 +453,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: "center",
     marginVertical: 10,
+    fontFamily: "OpenSans_Condensed-SemiBold",
   },
   bottomSection: {
     marginTop: 20,
     padding: 15,
     borderRadius: 15,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
     width: "90%",
     alignItems: "center",
-    elevation: 2,
+
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
@@ -470,7 +488,7 @@ const styles = StyleSheet.create({
   captureSuccessText: {
     color: "white",
     fontSize: 18,
-    fontWeight: "bold",
+    fontFamily: "OpenSans_Condensed-Bold",
     backgroundColor: "rgba(0,150,0,0.8)",
     paddingHorizontal: 25,
     paddingVertical: 10,
@@ -480,6 +498,7 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
+    width: "135%",
   },
   resetText: {
     color: "#0077B6",
@@ -492,6 +511,22 @@ const styles = StyleSheet.create({
     backgroundColor: "#EEF2F6",
     justifyContent: "center",
     alignItems: "center",
+  },
+  button: {
+    backgroundColor: "#03045E", // Button background color
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    flex: 1,
+
+    marginHorizontal: 30, // Add some spacing between buttons
+  },
+  buttonText: {
+    color: "#FFFFFF", // Button text color
+    fontSize: 16,
+    fontFamily: "OpenSans_Condensed-Bold", // Use your custom font
   },
 });
 

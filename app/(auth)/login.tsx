@@ -8,11 +8,15 @@ import {
   Image,
   TouchableOpacity,
   ActivityIndicator,
+  Keyboard,
+  TouchableWithoutFeedback,
+  KeyboardAvoidingView,
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
 import { LinearGradient } from "expo-linear-gradient";
+import { useFonts } from "expo-font";
 
 interface LoginFormProps {
   onLogin?: (email: string, password: string) => void;
@@ -34,14 +38,20 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const responsiveFontSize = 16 / fontScale;
 
   const handleLogin = () => {
-    // For now, just set logged in and navigate forward
-    setIsLoading(true);
-    // Simulate a short delay to show loading state
-    setTimeout(() => {
-      setIsLoggedIn(true);
-      router.replace("/checkin-screen");
-      setIsLoading(false);
-    }, 1000);
+    // Validate inputs before proceeding
+    validateEmail(email);
+    validatePassword(password);
+
+    // Only proceed if both inputs are valid
+    if (email && password) {
+      setIsLoading(true);
+      // Simulate a short delay to show loading state
+      setTimeout(() => {
+        setIsLoggedIn(true);
+        router.replace("/checkin-screen");
+        setIsLoading(false);
+      }, 1000);
+    }
   };
 
   const handleForgotPassword = () => {
@@ -52,6 +62,19 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
     // Will implement later
   };
 
+  const [fontsLoaded] = useFonts({
+    "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
+    "OpenSans_Condensed-Regular": require("../../assets/fonts/OpenSans_Condensed-Regular.ttf"),
+    "OpenSans_Condensed-SemiBold": require("../../assets/fonts/OpenSans_Condensed-SemiBold.ttf"),
+  });
+
+  if (!fontsLoaded) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#03045E" />
+      </View>
+    );
+  }
   const validateEmail = (email: string): void => {
     // Simple validation for now
     if (!email) {
@@ -99,193 +122,197 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const togglePasswordVisibility = (): void => {
     setShowPassword(!showPassword);
   };
+  const handleScreenPress = () => {
+    Keyboard.dismiss();
+  };
 
   return (
     <SafeAreaView style={styles.safeAreaContainer}>
-      <View style={styles.container}>
-        <View style={styles.imageContainer}>
-          <Image
-            source={require("../../assets/ANPRLOGO.png")} // Replace with your image path
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </View>
+      <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
+        <TouchableWithoutFeedback onPress={handleScreenPress}>
+          <View style={styles.container}>
+            <View style={styles.imageContainer}>
+              <Image
+                source={require("../../assets/ANPRLOGO.png")} // Replace with your image path
+                style={styles.logo}
+              />
+            </View>
 
-        {/* Email Input */}
-        <View style={styles.inputContainer}>
-          <PaperTextInput
-            label={
-              <Text
-                style={{
-                  color: "#03045E",
-                  fontFamily: "OpenSans_Condensed-Regular",
-                  fontSize: responsiveFontSize,
-                }}
-              >
-                Email*
-              </Text>
-            }
-            textColor="#03045E"
-            value={email}
-            onBlur={() => validateEmail(email)}
-            keyboardType="email-address"
-            onChangeText={(text) => {
-              setEmail(text);
-              validateEmail(text);
-            }}
-            mode="outlined"
-            outlineStyle={{
-              borderWidth: 1,
-              borderRadius: 5,
-              borderColor: isEmailValid ? "#03045e" : "red",
-            }}
-            style={[styles.textInput, !isEmailValid && { borderColor: "red" }]}
-            theme={{
-              colors: {
-                primary: isEmailValid ? "#03045E" : "red",
-                text: "#03045E",
-              },
-            }}
-            right={
-              email ? (
-                <PaperTextInput.Icon
-                  icon="close-circle-outline"
-                  onPress={handleClearEmail}
-                  color="#000"
-                  size={22}
-                />
-              ) : null
-            }
-            selectionColor="#03045E"
-            onFocus={clearEmailError}
-          />
-          {emailError ? (
-            <Text
-              style={{
-                color: "red",
-                fontSize: responsiveFontSize - 2,
-                marginLeft: 5,
-                fontFamily: "OpenSans_Condensed-Regular",
-              }}
-            >
-              {emailError}
-            </Text>
-          ) : null}
-        </View>
+            <Text style={styles.welcomeText}>Hi, Welcome Back</Text>
+            <Text style={styles.infoText}>Login to your account</Text>
 
-        {/* Password Input */}
-        <View style={styles.inputContainer}>
-          <PaperTextInput
-            label={
-              <Text
-                style={{
-                  color: "#03045E",
-                  fontFamily: "OpenSans_Condensed-Regular",
-                  fontSize: responsiveFontSize,
+            {/* Email Input */}
+            <View style={styles.inputContainer}>
+              <PaperTextInput
+                label={
+                  <Text
+                    style={{
+                      color: "#03045E",
+                      fontFamily: "OpenSans_Condensed-Regular",
+                      fontSize: responsiveFontSize,
+                    }}
+                  >
+                    Email*
+                  </Text>
+                }
+                textColor="#03045E"
+                value={email}
+                onBlur={() => validateEmail(email)}
+                keyboardType="email-address"
+                onChangeText={(text) => {
+                  setEmail(text);
+                  validateEmail(text);
                 }}
-              >
-                Password*
-              </Text>
-            }
-            textColor="#03045E"
-            value={password}
-            onBlur={() => validatePassword(password)}
-            secureTextEntry={!showPassword}
-            onChangeText={(text) => {
-              setPassword(text);
-              validatePassword(text);
-            }}
-            mode="outlined"
-            outlineStyle={{
-              borderWidth: 1,
-              borderRadius: 5,
-              borderColor: isPasswordValid ? "#03045e" : "red",
-            }}
-            style={[
-              styles.textInput,
-              !isPasswordValid && { borderColor: "red" },
-            ]}
-            theme={{
-              colors: {
-                primary: isPasswordValid ? "#03045E" : "red",
-                text: "#03045E",
-              },
-            }}
-            right={
-              <>
-                <PaperTextInput.Icon
-                  icon={showPassword ? "eye-off" : "eye"}
-                  onPress={togglePasswordVisibility}
-                  color="#000"
-                  size={22}
-                />
-                {password ? (
+                mode="outlined"
+                outlineStyle={{
+                  borderWidth: 1,
+                  borderRadius: 5,
+                  borderColor: isEmailValid ? "#03045e" : "red",
+                }}
+                style={[
+                  styles.textInput,
+                  !isEmailValid && { borderColor: "red" },
+                ]}
+                theme={{
+                  colors: {
+                    primary: isEmailValid ? "#03045E" : "red",
+                    text: "#03045E",
+                  },
+                }}
+                right={
+                  email ? (
+                    <PaperTextInput.Icon
+                      icon="close-circle-outline"
+                      onPress={handleClearEmail}
+                      color="#000"
+                      size={22}
+                    />
+                  ) : null
+                }
+                selectionColor="#03045E"
+                onFocus={clearEmailError}
+              />
+              {emailError ? (
+                <Text
+                  style={{
+                    color: "red",
+                    fontSize: responsiveFontSize - 2,
+                    marginLeft: 5,
+                    fontFamily: "OpenSans_Condensed-Regular",
+                  }}
+                >
+                  {emailError}
+                </Text>
+              ) : null}
+            </View>
+
+            {/* Password Input */}
+            <View style={styles.inputContainer}>
+              <PaperTextInput
+                label={
+                  <Text
+                    style={{
+                      color: "#03045E",
+                      fontFamily: "OpenSans_Condensed-Regular",
+                      fontSize: responsiveFontSize,
+                    }}
+                  >
+                    Password*
+                  </Text>
+                }
+                textColor="#03045E"
+                value={password}
+                onBlur={() => validatePassword(password)}
+                secureTextEntry={!showPassword}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  validatePassword(text);
+                }}
+                mode="outlined"
+                outlineStyle={{
+                  borderWidth: 1,
+                  borderRadius: 5,
+                  borderColor: isPasswordValid ? "#03045e" : "red",
+                }}
+                style={[
+                  styles.textInput,
+                  !isPasswordValid && { borderColor: "red" },
+                ]}
+                theme={{
+                  colors: {
+                    primary: isPasswordValid ? "#03045E" : "red",
+                    text: "#03045E",
+                  },
+                }}
+                right={
                   <PaperTextInput.Icon
-                    icon="close-circle-outline"
-                    onPress={handleClearPassword}
+                    icon={showPassword ? "eye-outline" : "eye-off-outline"}
+                    onPress={togglePasswordVisibility}
                     color="#000"
                     size={22}
                   />
-                ) : null}
-              </>
-            }
-            selectionColor="#03045E"
-            onFocus={clearPasswordError}
-          />
-          {passwordError ? (
-            <Text
-              style={{
-                color: "red",
-                fontSize: responsiveFontSize - 2,
-                marginLeft: 5,
-                fontFamily: "OpenSans_Condensed-Regular",
-              }}
+                }
+                selectionColor="#03045E"
+                onFocus={clearPasswordError}
+              />
+              {passwordError ? (
+                <Text
+                  style={{
+                    color: "red",
+                    fontSize: responsiveFontSize - 2,
+                    marginLeft: 5,
+                    fontFamily: "OpenSans_Condensed-Regular",
+                  }}
+                >
+                  {passwordError}
+                </Text>
+              ) : null}
+            </View>
+
+            {/* Forgot Password Link */}
+            {/* <TouchableOpacity
+              style={styles.forgotPasswordContainer}
+              onPress={handleForgotPassword}
             >
-              {passwordError}
-            </Text>
-          ) : null}
-        </View>
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity> */}
 
-        {/* Forgot Password Link */}
-        <TouchableOpacity
-          style={styles.forgotPasswordContainer}
-          onPress={handleForgotPassword}
-        >
-          <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-        </TouchableOpacity>
-
-        {/* Login Button with Gradient */}
-        <TouchableOpacity
-          activeOpacity={0.5}
-          onPress={handleLogin}
-          disabled={isLoading}
-          style={styles.signInButton}
-        >
-          {isLoading ? (
-            <ActivityIndicator size="small" color="#03045E" />
-          ) : (
-            <LinearGradient
-              colors={["#02023C", "#64DFDF"]}
-              start={{ x: 0.8, y: 2 }}
-              end={{ x: -0.2, y: 2 }}
-              style={styles.linearGradient}
+            {/* Login Button with Gradient */}
+            <TouchableOpacity
+              activeOpacity={0.5}
+              onPress={handleLogin}
+              disabled={isLoading}
+              style={styles.signInButton}
             >
-              <Text style={styles.signInButtonText}>Log In</Text>
-            </LinearGradient>
-          )}
-        </TouchableOpacity>
+              {isLoading ? (
+                <ActivityIndicator size="small" color="#03045E" />
+              ) : (
+                <LinearGradient
+                  colors={["#02023C", "#64DFDF"]}
+                  start={{ x: 0.8, y: 2 }}
+                  end={{ x: -0.2, y: 2 }}
+                  style={styles.linearGradient}
+                >
+                  <Text style={styles.signInButtonText}>Log In</Text>
+                </LinearGradient>
+              )}
+            </TouchableOpacity>
 
-        {/* Sign Up Link */}
-        <View style={styles.linkContainer}>
-          <Text style={styles.accountText}>Don't have an account?{"  "}</Text>
-          <TouchableOpacity
-            style={styles.touchableContainer}
-            onPress={handleSignup}
-          >
-            <Text style={styles.touchableText}>Sign Up</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            {/* Sign Up Link */}
+            {/* <View style={styles.linkContainer}>
+              <Text style={styles.accountText}>
+                Don't have an account?{"  "}
+              </Text>
+              <TouchableOpacity
+                style={styles.touchableContainer}
+                onPress={handleSignup}
+              >
+                <Text style={styles.touchableText}>Sign Up</Text>
+              </TouchableOpacity>
+            </View> */}
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -300,19 +327,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    height: "auto",
   },
   imageContainer: {
     alignItems: "center",
     marginBottom: 30,
   },
   logo: {
-    width: 150,
-    height: 150,
+    width: 100,
+    height: 100,
   },
   inputContainer: {
     width: "85%",
     height: 50,
     marginVertical: 11,
+  },
+  welcomeText: {
+    color: "#03045E",
+    fontSize: 30,
+    marginBottom: 5,
+    lineHeight: 30,
+    fontFamily: "OpenSans_Condensed-Bold",
+  },
+  infoText: {
+    color: "#03045E",
+    fontFamily: "OpenSans_Condensed-Bold",
+    fontSize: 20,
+    lineHeight: 18 * 1.5,
+    marginBottom: 15,
   },
   textInput: {
     backgroundColor: "white",
@@ -365,6 +407,12 @@ const styles = StyleSheet.create({
     fontFamily: "OpenSans_Condensed-Bold",
     fontSize: 18,
     color: "#4C7EFF",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
   },
   touchableContainer: {},
 });

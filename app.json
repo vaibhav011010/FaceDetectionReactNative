@@ -3,7 +3,6 @@
     "name": "VisitorManagementSystem",
     "slug": "VisitorManagementSystem",
     "scheme": "visitormanagementsystem",
-
     "version": "1.0.0",
     "orientation": "portrait",
     "entryPoint": "expo-router/entry",
@@ -16,7 +15,8 @@
           "microphonePermissionText": "$(PRODUCT_NAME) needs access to your Microphone."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font"
     ],
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

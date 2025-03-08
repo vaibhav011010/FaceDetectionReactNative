@@ -16,7 +16,13 @@
         }
       ],
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-router",
+        {
+          "root": "./app"
+        }
+      ]
     ],
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -35,7 +41,7 @@
         "NSCameraUsageDescription": "$(PRODUCT_NAME) needs access to your Camera.",
         "NSMicrophoneUsageDescription": "$(PRODUCT_NAME) needs access to your Microphone."
       },
-      "bundleIdentifier": "com.jackkhairnar.VisitorManagementSystem"
+      "bundleIdentifier": "com.VisitorManagementSystem.VisitorManagementSystem"
     },
     "android": {
       "adaptiveIcon": {
@@ -46,7 +52,8 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.jackkhairnar.VisitorManagementSystem"
+      "package": "com.VisitorManagementSystem.VisitorManagementSystem",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"

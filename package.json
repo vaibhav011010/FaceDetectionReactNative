@@ -6,6 +6,7 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
+    "prebuild": "EXPO_ROUTER_APP_ROOT=./app",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
@@ -13,6 +14,7 @@
     "@expo/vector-icons": "^14.0.4",
     "@react-navigation/native": "6.x",
     "@react-navigation/native-stack": "^7.2.1",
+    "babel-plugin-transform-define": "^2.1.4",
     "expo": "~52.0.37",
     "expo-constants": "~17.0.7",
     "expo-dev-client": "~5.0.12",
@@ -43,6 +45,7 @@
     "@react-native-community/cli": "^17.0.0",
     "@types/react": "~18.3.12",
     "@types/react-native": "^0.73.0",
+    "babel-plugin-transform-inline-environment-variables": "^0.4.4",
     "metro-react-native-babel-preset": "^0.77.0",
     "typescript": "^5.3.3"
   },

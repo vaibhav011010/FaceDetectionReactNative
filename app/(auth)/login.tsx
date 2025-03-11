@@ -1,4 +1,4 @@
-import React, { useState, useContext } from "react";
+import React, { useState, useContext, useEffect } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
+  StatusBar,
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter } from "expo-router";
@@ -36,6 +37,16 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const responsiveFontSize = 16 / fontScale;
+
+  // Set status bar to hidden when component mounts
+  useEffect(() => {
+    StatusBar.setHidden(true, "none");
+
+    // Clean up when component unmounts
+    return () => {
+      StatusBar.setHidden(false, "none");
+    };
+  }, []);
 
   const handleLogin = () => {
     // Validate inputs before proceeding

@@ -24,9 +24,13 @@ export default function SplashScreen() {
   }, [isLoggedIn]);
 
   return (
-    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-      <Text>Loading...</Text>
-      <ActivityIndicator size="large" color="#03045E" />
-    </View>
+    <View
+      style={{
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "white",
+      }}
+    ></View>
   );
 }

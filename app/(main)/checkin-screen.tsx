@@ -1,434 +1,181 @@
-import React, { useState } from "react";
+import React, { useEffect } from "react";
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
-  useWindowDimensions,
+  TouchableOpacity,
+  StatusBar,
+  Image,
   ActivityIndicator,
+  Dimensions,
+  useWindowDimensions,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { TextInput as PaperTextInput } from "react-native-paper";
-import LinearGradient from "react-native-linear-gradient";
 import { useFonts } from "expo-font";
-import DropDownPicker from "react-native-dropdown-picker";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import { Ionicons } from "@expo/vector-icons";
 
 export default function CheckinScreen() {
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const responsiveFontSize = 16 / fontScale;
+  const windowWidth = Dimensions.get("window").width;
+  const windowHeight = Dimensions.get("window").height;
 
-  // State for form fields
-  const [visitorName, setVisitorName] = useState("");
-  const [visitorMobile, setVisitorMobile] = useState("");
-  const [visitingCompany, setVisitingCompany] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [openCompanyName, setOpenCompanyName] = useState(false);
-  const [companyName, setCompanyName] = useState<string | null>(null);
-  const [companies, setCompanies] = useState([
-    { label: "Company A", value: "companyA" },
-    { label: "Company B", value: "companyB" },
-    { label: "Company C", value: "companyC" },
-  ]);
+  // Set status bar to hidden when component mounts
+  useEffect(() => {
+    StatusBar.setHidden(true, "none");
 
-  // Handle company change
-  const handleCompanyChange = (value: string | null) => {
-    setCompanyName(value);
-    console.log("Selected Company:", value);
-  };
-  // Handle Next button press
-  const handleNext = () => {
-    setIsLoading(true);
-    // Simulate an API call or validation
-    setTimeout(() => {
-      setIsLoading(false);
-      router.replace("/visitorform-screen"); // Navigate to the next screen
-    }, 2000);
-  };
-  const handleClearCompany = (): void => {
-    setVisitingCompany("");
+    // Clean up when component unmounts
+    return () => {
+      StatusBar.setHidden(false, "none");
+    };
+  }, []);
+
+  // Handle button press
+  const handleNewVisit = () => {
+    router.replace("/visitorform-screen");
   };
 
-  const handleClearName = (): void => {
-    setVisitorName("");
-  };
-
-  const handleClearMobile = (): void => {
-    setVisitorMobile("");
-  };
+  // Load custom fonts
   const [fontsLoaded] = useFonts({
     "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
     "OpenSans_Condensed-Regular": require("../../assets/fonts/OpenSans_Condensed-Regular.ttf"),
     "OpenSans_Condensed-SemiBold": require("../../assets/fonts/OpenSans_Condensed-SemiBold.ttf"),
   });
+
+  // Show loading indicator while fonts are loading
   if (!fontsLoaded) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#03045E" />
+        <ActivityIndicator size="large" color="#FFD700" />
       </View>
     );
   }
+
   return (
     <View style={styles.container}>
-      {/* Visitor Name Input */}
-      <View style={styles.inputContainer}>
-        <PaperTextInput
-          label={
-            <Text
-              style={{
-                color: "#03045E",
-                fontFamily: "OpenSans_Condensed-Regular",
-                fontSize: responsiveFontSize,
-              }}
-            >
-              Visitor Name*
-            </Text>
-          }
-          textColor="#03045E"
-          value={visitorName}
-          onChangeText={setVisitorName}
-          mode="outlined"
-          outlineStyle={{
-            borderWidth: 1,
-            borderRadius: 5,
-            borderColor: "#03045e",
-          }}
-          style={styles.textInput}
-          theme={{
-            colors: {
-              primary: "#03045E",
-              text: "#03045E",
-            },
-          }}
-          right={
-            visitorName ? (
-              <PaperTextInput.Icon
-                icon="close-circle-outline"
-                onPress={handleClearName}
-                color="#000"
-                size={22}
-              />
-            ) : null
-          }
-          selectionColor="#03045E"
-        />
-      </View>
-
-      {/* Visitor Mobile Input */}
-      <View style={styles.inputContainer}>
-        <PaperTextInput
-          label={
-            <Text
-              style={{
-                color: "#03045E",
-                fontFamily: "OpenSans_Condensed-Regular",
-                fontSize: responsiveFontSize,
-              }}
-            >
-              Visitor Mobile*
-            </Text>
-          }
-          textColor="#03045E"
-          value={visitorMobile}
-          onChangeText={setVisitorMobile}
-          mode="outlined"
-          outlineStyle={{
-            borderWidth: 1,
-            borderRadius: 5,
-            borderColor: "#03045e",
-          }}
-          style={styles.textInput}
-          theme={{
-            colors: {
-              primary: "#03045E",
-              text: "#03045E",
-            },
-          }}
-          keyboardType="phone-pad"
-          right={
-            visitorMobile ? (
-              <PaperTextInput.Icon
-                icon="close-circle-outline"
-                onPress={handleClearMobile}
-                color="#000"
-                size={22}
-              />
-            ) : null
-          }
-          selectionColor="#03045E"
-        />
-      </View>
-
-      {/* Visiting Company Input */}
-      <View style={styles.inputContainer}>
-        <DropDownPicker
-          open={openCompanyName}
-          value={companyName}
-          items={companies}
-          setOpen={setOpenCompanyName}
-          setValue={(callback) => {
-            const newValue = callback(companyName); // Pass prevState (companyName) to the callback
-            handleCompanyChange(newValue); // Update companyName
-          }}
-          onChangeValue={(value) => {
-            console.log("Selected Value ID:", value);
-            handleCompanyChange(value);
-          }}
-          zIndex={2000}
-          zIndexInverse={1000}
-          placeholder="Visiting Company Name*"
-          style={{
-            ...styles.inputDropdown,
-            backgroundColor: "white",
-            width: "100%",
-            alignSelf: "center",
-          }}
-          // itemStyle={styles.dropdownItem}
-          labelStyle={{
-            ...styles.dropdownLabel,
-            fontFamily: "OpenSans_Condensed-Regular",
-          }}
-          placeholderStyle={{
-            fontSize: 14,
-            fontFamily: "OpenSans_Condensed-Regular",
-            color: "#03045E",
-            fontWeight: "600",
-            padding: 5,
-          }}
-          dropDownDirection="BOTTOM"
-          // dropDownStyle={styles.dropdownMenu}
-          dropDownContainerStyle={{
-            width: "100%",
-            alignSelf: "center",
-            borderColor: "#F2F2F2",
-            elevation: 1,
-
-            borderRadius: 10,
-            marginTop: 16.5,
-          }}
-          ArrowUpIconComponent={({ style }) => (
-            <Ionicons
-              name="chevron-up-outline"
-              size={20}
-              style={[style, { color: "#03045E", right: 7 }]}
-            />
-          )}
-          ArrowDownIconComponent={({ style }) => (
-            <Ionicons
-              name="chevron-down-outline"
-              size={20}
-              style={[style, { color: "#03045E", right: 7 }]}
-            />
-          )}
-        />
-      </View>
-      <TouchableOpacity
-        style={styles.inputContainer}
-        onPress={() => {
-          // Add logic for photo upload here
-          console.log("Photo upload clicked");
-        }}
+      <View
+        style={[
+          styles.borderContainer,
+          { width: windowWidth, height: windowHeight },
+        ]}
       >
-        <PaperTextInput
-          label={
-            <Text
-              style={{
-                color: "#03045E",
-                fontFamily: "OpenSans_Condensed-Regular",
-                fontSize: responsiveFontSize,
-              }}
-            >
-              Photo*
+        <View style={styles.contentContainer}>
+          <View style={styles.centeredContent}>
+            {/* Welcome Header */}
+            <Text style={styles.welcomeText}>
+              WELCOME TO SAGAR TECH PLAZA B
             </Text>
-          }
-          textColor="#03045E"
-          value="" // No value since input is disabled
-          mode="outlined"
-          outlineStyle={{
-            borderWidth: 1,
-            borderRadius: 5,
-            borderColor: "#03045e",
-          }}
-          style={styles.textInput}
-          theme={{
-            colors: {
-              primary: "#03045E",
-              text: "#03045E",
-            },
-          }}
-          editable={false} // Disable input
-          right={
-            <PaperTextInput.Icon
-              icon="camera"
-              color="#03045E"
-              size={22}
-              onPress={() => {
-                // Add logic for photo upload here
-                console.log("Photo upload clicked");
-              }}
-            />
-          }
-        />
-      </TouchableOpacity>
 
-      {/* Next Button with Gradient */}
-      <TouchableOpacity
-        activeOpacity={0.5}
-        onPress={handleNext}
-        disabled={isLoading}
-        style={styles.signInButton}
-      >
-        {isLoading ? (
-          <ActivityIndicator size="small" color="#03045E" />
-        ) : (
-          <LinearGradient
-            colors={["#02023C", "#64DFDF"]}
-            start={{ x: 0.8, y: 2 }}
-            end={{ x: -0.2, y: 2 }}
-            style={styles.linearGradient}
-          >
-            <Text style={styles.signInButtonText}>Next</Text>
-          </LinearGradient>
-        )}
-      </TouchableOpacity>
+            {/* Company Logo */}
+            {/* <View style={styles.logoContainer}>
+              <View style={styles.logoCircle}>
+                <Text style={styles.logoText}>Anpr</Text>
+              </View>
+            </View> */}
+            <View style={styles.imageContainer}>
+              <Image
+                source={require("../../assets/ANPRLOGO.png")} // Replace with your image path
+                style={styles.logo}
+              />
+            </View>
+
+            {/* New Visit Button */}
+            <TouchableOpacity
+              style={styles.newVisitButton}
+              activeOpacity={0.8}
+              onPress={handleNewVisit}
+            >
+              <Ionicons name="person-add" size={26} color="white" />
+              <Text style={styles.buttonText}>CHECK IN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeAreaContainer: {
-    flex: 1,
-    backgroundColor: "white",
-  },
   container: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-  },
-  imageContainer: {
-    alignItems: "center",
-    marginBottom: 30,
-  },
-  logo: {
-    width: 100,
-    height: 100,
-  },
-  inputContainer: {
-    width: "85%",
-    height: 50,
-    marginVertical: 11,
-  },
-  welcomeText: {
-    color: "#03045E",
-    fontSize: 30,
-    marginBottom: 5,
-    lineHeight: 30,
-    fontFamily: "OpenSans_Condensed-Bold",
-  },
-  infoText: {
-    color: "#03045E",
-    fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 20,
-    lineHeight: 18 * 1.5,
-    marginBottom: 15,
-  },
-  textInput: {
-    backgroundColor: "white",
-    fontSize: 16,
-    fontFamily: "OpenSans-VariableFont_wdth,wght",
-  },
-  forgotPasswordContainer: {
-    alignSelf: "flex-end",
-    alignItems: "center",
-    marginTop: 3,
-    marginRight: "8%",
-  },
-  forgotPasswordText: {
-    color: "#03045E",
-    fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 16,
-  },
-  signInButton: {
-    width: "85%",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 40,
-  },
-  linearGradient: {
-    width: "100%",
-    height: 45,
-    justifyContent: "center",
-    alignItems: "center",
-    borderRadius: 10,
-    backgroundColor: "#4E4E4E",
-
-    padding: 0,
-  },
-  signInButtonText: {
-    color: "#FFFAFA",
-    fontSize: 18,
-    fontFamily: "OpenSans_Condensed-Bold",
-  },
-  linkContainer: {
-    marginTop: 25,
-    alignItems: "center",
-    flexDirection: "row",
-  },
-  accountText: {
-    fontSize: 18,
-    fontFamily: "OpenSans_Condensed-Bold",
-    color: "#03045E",
-  },
-  touchableText: {
-    fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 18,
-    color: "#4C7EFF",
+    backgroundColor: "#000",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "#000",
   },
-  inputContaineDropDown: {
+  borderContainer: {
+    borderWidth: 14,
+    borderColor: "#03045E", // Sky blue color
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  contentContainer: {
+    flex: 1,
+    backgroundColor: "white", // Deep navy blue
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  centeredContent: {
     width: "100%",
-    height: 52,
-    marginVertical: 8,
-    borderColor: "#03045E",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
   },
-  dropdownMenu: {
-    backgroundColor: "#ffffff",
-    borderRadius: 5,
-    borderWidth: 0.5,
-    borderColor: "#fff",
-    boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
-    padding: 10,
-  },
-  dropdownLabel: {
-    fontSize: 16,
-    fontFamily: "OpenSans_SemiCondensed-SemiBold",
+  welcomeText: {
+    fontFamily: "OpenSans_Condensed-Bold",
+    fontSize: 26,
     color: "#03045E",
-    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 60,
   },
-  inputDropdown: {
-    height: 50,
-    padding: 1,
-    borderColor: "#03045E",
+  logoContainer: {
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 35,
+  },
+  logoCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 3,
+    borderColor: "#C0C0C0", // Silver border
+    backgroundColor: "#0a1442", // Same as background
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logoText: {
+    fontFamily: "OpenSans_Condensed-Bold",
+    fontSize: 40,
+    color: "#FFD700", // Gold/yellow color
+  },
+  newVisitButton: {
+    flexDirection: "row",
+    backgroundColor: "#03045E",
+    paddingVertical: 18,
+    paddingHorizontal: 39,
     borderRadius: 5,
-    marginBottom: 2,
-
-    marginVertical: 13,
-    paddingHorizontal: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#C0C0C0", // Silver border
   },
-  dropdownItem: {
-    justifyContent: "flex-start",
-    color: "#03045E",
-    padding: 5,
-    cursor: "pointer",
-    borderBottomWidth: 0,
+  buttonText: {
+    fontFamily: "OpenSans_Condensed-Bold",
+    fontSize: 22,
+    color: "white", // Gold/yellow color
+    marginLeft: 10,
   },
-  touchableContainer: {},
+  imageContainer: {
+    alignItems: "center",
+    marginBottom: 60,
+  },
+  logo: {
+    width: 120,
+    height: 120,
+  },
 });

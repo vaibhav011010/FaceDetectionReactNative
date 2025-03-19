@@ -23,6 +23,19 @@ import { Worklets } from "react-native-worklets-core";
 import { useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { convertPhotoToBase64 } from "@/src/utility/photoConvertor";
+import { useSelector, useDispatch } from "react-redux";
+import {
+  selectVisitorName,
+  selectVisitorMobile,
+  selectVisitingCompany,
+  resetForm,
+  clearVisitorName,
+  clearVisitorMobile,
+  clearVisitingCompany,
+} from "../store/slices/visitorSlice";
+import { submitVisitor } from "../api/visitorForm";
+import { AppDispatch, RootState } from "../store";
 
 interface Face {
   bounds: {
@@ -40,6 +53,16 @@ type Props = {};
 
 const CameraScreen = (props: Props) => {
   const router = useRouter();
+  const visitorNameRedux = useSelector(
+    (state: RootState) => state.visitor.visitorName
+  );
+  const visitorMobileRedux = useSelector(
+    (state: RootState) => state.visitor.visitorMobile
+  );
+  const visitingCompanyRedux = useSelector(
+    (state: RootState) => state.visitor.visitingCompany
+  );
+  const dispatch = useDispatch<AppDispatch>();
   const [faces, setFaces] = useState<Face[]>([]);
   const device = useCameraDevice("front");
   const cameraRef = useRef<Camera>(null);
@@ -48,10 +71,16 @@ const CameraScreen = (props: Props) => {
     width: 0,
     height: 0,
   });
+  const [cameraKey, setCameraKey] = useState<number>(0);
 
   // New states for countdown and photo capture
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [capturedPhoto, setCapturedPhoto] = useState<PhotoFile | null>(null);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+
+  const [capturedPhotoUri, setCapturedPhotoUri] = useState<string | null>(null);
+  const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
+    null
+  );
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const [isProcessing, setIsProcessing] = useState(false);
@@ -92,7 +121,7 @@ const CameraScreen = (props: Props) => {
     if (
       newFaces.length > 0 &&
       !countdownInProgressRef.current &&
-      !capturedPhoto
+      !capturedPhotoUri
     ) {
       console.log("DEBUG: Face detected, starting countdown");
       setDebugMsg("Face detected - starting countdown");
@@ -131,7 +160,7 @@ const CameraScreen = (props: Props) => {
   // Simple function to start the countdown
   const startCountdown = () => {
     // Only start if not already in progress
-    if (countdownInProgressRef.current || capturedPhoto) return;
+    if (countdownInProgressRef.current || capturedPhotoUri) return;
 
     countdownInProgressRef.current = true;
     setCountdown(3);
@@ -191,10 +220,15 @@ const CameraScreen = (props: Props) => {
         const photo = await cameraRef.current.takePhoto({
           flash: "off",
         });
+        const base64Photo = await convertPhotoToBase64(photo.path);
+        const fileUri = photo.path.startsWith("file://")
+          ? photo.path
+          : `file://${photo.path}`;
+        setCapturedPhotoUri(fileUri);
 
-        console.log("DEBUG: Photo taken successfully", photo.path);
+        //  console.log("DEBUG: Photo taken successfully", photo.path);
+
         setDebugMsg("Photo captured");
-        setCapturedPhoto(photo);
 
         // Animate photo capture with a flash effect
         Animated.sequence([
@@ -237,9 +271,12 @@ const CameraScreen = (props: Props) => {
   const resetCamera = () => {
     console.log("DEBUG: Resetting camera");
     setDebugMsg("Reset camera");
-    setCapturedPhoto(null);
+    setCapturedPhotoUri(null); // Clear the preview image URI
+    setCapturedPhotoBase64(null); // Clear the stored Base64 string
     setCountdown(null);
     countdownInProgressRef.current = false;
+    // Force remount of Camera component by changing its key
+    setCameraKey((prev) => prev + 1);
   };
 
   // Function to handle the cancel action
@@ -249,21 +286,61 @@ const CameraScreen = (props: Props) => {
   };
 
   // Function to handle the confirm submission
-  const handleConfirmSubmit = () => {
+  const handleConfirmSubmit = async (): Promise<void> => {
+    if (!capturedPhotoUri) {
+      Alert.alert("No Photo", "Please capture a photo before submitting.");
+      return;
+    }
+
     setShowConfirmModal(false);
     setIsProcessing(true);
 
-    // Simulate submission process
-    setTimeout(() => {
-      setIsProcessing(false);
-      setShowThankYouModal(true);
+    try {
+      let base64String = capturedPhotoBase64;
+      if (!base64String) {
+        const result = await convertPhotoToBase64(capturedPhotoUri);
+        base64String = result.image_base64;
+        setCapturedPhotoBase64(base64String);
+      }
 
-      // Automatically redirect after showing thank you message
-      setTimeout(() => {
-        setShowThankYouModal(false);
+      const result = await submitVisitor(
+        visitorNameRedux,
+        visitorMobileRedux,
+        Number(visitingCompanyRedux),
+        base64String
+      );
+
+      setIsProcessing(false);
+
+      if (result.success) {
+        console.log("Success", "Visitor check-in submitted successfully.");
+
+        // Reset the form fields by dispatching your actions here
+        dispatch(resetForm());
+        dispatch(clearVisitorName());
+        dispatch(clearVisitorMobile());
+        dispatch(clearVisitingCompany());
+
+        setShowThankYouModal(true);
+        setTimeout(() => {
+          setShowThankYouModal(false);
+          router.replace("/checkin-screen");
+        }, 2000);
+      } else {
+        console.log(
+          "👾Offline",
+          "No connection. Data stored locally for sync."
+        );
         router.replace("/checkin-screen");
-      }, 2000);
-    }, 1500);
+      }
+    } catch (error) {
+      console.error("Submit error:", error);
+      Alert.alert(
+        "Submit Failed",
+        "Visitor check-in submission failed. Please try again."
+      );
+      setIsProcessing(false);
+    }
   };
 
   if (!hasPermission) {
@@ -283,13 +360,24 @@ const CameraScreen = (props: Props) => {
       </View>
     );
   }
-  const confirmCancel = () => {
+  const confirmCancel = (): void => {
+    // Hide the cancel confirmation modal
     setShowCancelModal(false);
+
+    // Reset component-level states
+    setCapturedPhotoUri(null);
+    setCountdown(null);
+    countdownInProgressRef.current = false;
+    setDebugMsg("");
+
+    // Reset Redux form state
+    dispatch(resetForm());
+    dispatch(clearVisitorName());
+    dispatch(clearVisitorMobile());
+    dispatch(clearVisitingCompany());
     console.log("DEBUG: Canceling and navigating to check-in screen");
     router.replace("/checkin-screen");
-    // Add logic for cancellation (e.g., navigate back or clear form)
   };
-
   // const [fontsLoaded] = useFonts({
   //   "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
   //   "OpenSans_Condensed-Regular": require("../../assets/fonts/OpenSans_Condensed-Regular.ttf"),
@@ -315,7 +403,7 @@ const CameraScreen = (props: Props) => {
         ]}
       >
         {/* Header with retry button when photo is captured */}
-        {capturedPhoto && (
+        {capturedPhotoUri && (
           <View style={styles.headerContainer}>
             <TouchableOpacity style={styles.retryButton} onPress={resetCamera}>
               <Ionicons name="refresh-outline" size={22} color="#03045E" />
@@ -334,16 +422,17 @@ const CameraScreen = (props: Props) => {
             );
           }}
         >
-          {!capturedPhoto ? (
+          {!capturedPhotoUri ? (
             <Animated.View
               style={{ opacity: fadeAnim, width: "100%", height: "100%" }}
             >
               <Camera
+                key={cameraKey}
                 ref={cameraRef}
                 style={styles.camera}
                 device={device}
-                isActive={!capturedPhoto}
-                frameProcessor={!capturedPhoto ? frameProcessor : undefined}
+                isActive={!capturedPhotoUri}
+                frameProcessor={!capturedPhotoUri ? frameProcessor : undefined}
                 photo={true}
               />
 
@@ -390,9 +479,10 @@ const CameraScreen = (props: Props) => {
             /* Captured photo display */
             <View style={styles.capturedPhotoContainer}>
               <Image
-                source={{ uri: `file://${capturedPhoto.path}` }}
+                source={{ uri: capturedPhotoUri }}
                 style={styles.capturedImage}
               />
+
               <View style={styles.captureSuccessOverlay}>
                 <Text style={styles.captureSuccessText}>Photo Captured!</Text>
               </View>
@@ -402,7 +492,7 @@ const CameraScreen = (props: Props) => {
 
         {/* Bottom section with submit/cancel buttons */}
         <View style={styles.bottomSection}>
-          {capturedPhoto ? (
+          {capturedPhotoUri ? (
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 style={styles.cancelButton}

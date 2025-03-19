@@ -12,12 +12,36 @@ import {
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
   StatusBar,
+  Alert,
+  Button,
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
 import { LinearGradient } from "expo-linear-gradient";
 import { useFonts } from "expo-font";
+
+import { setCorporateParkName } from "../store/slices/globalSlice";
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import {
+  loginStart,
+  loginSuccess,
+  setEmailError,
+  setPasswordError,
+  clearEmailError,
+  clearPasswordError,
+  selectAuthLoading,
+  selectAuthError,
+  selectEmailError,
+  selectPasswordError,
+  selectIsEmailValid,
+  selectIsPasswordValid,
+  loginFailure,
+} from "../store/slices/authSlice";
+import { login } from "../api/auth";
+import User from "../database/models/User";
+import database from "../database";
+import { Q } from "@nozbe/watermelondb";
 
 interface LoginFormProps {
   onLogin?: (email: string, password: string) => void;
@@ -26,17 +50,20 @@ interface LoginFormProps {
 const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [isEmailValid, setIsEmailValid] = useState<boolean>(true);
-  const [isPasswordValid, setIsPasswordValid] = useState<boolean>(true);
   const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const { setIsLoggedIn } = useContext(LoginContext);
+  const dispatch = useAppDispatch();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const responsiveFontSize = 16 / fontScale;
+
+  // Select Redux state
+  const isLoading = useAppSelector(selectAuthLoading);
+  const authError = useAppSelector(selectAuthError);
+  const emailError = useAppSelector(selectEmailError);
+  const passwordError = useAppSelector(selectPasswordError);
+  const isEmailValid = useAppSelector(selectIsEmailValid);
+  const isPasswordValid = useAppSelector(selectIsPasswordValid);
 
   // Set status bar to hidden when component mounts
   useEffect(() => {
@@ -48,20 +75,155 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
     };
   }, []);
 
-  const handleLogin = () => {
-    // Validate inputs before proceeding
+  const validateEmail = (email: string): void => {
+    // Simple validation for now
+    if (!email) {
+      dispatch(setEmailError("Email is required"));
+    } else {
+      dispatch(clearEmailError());
+    }
+  };
+
+  const validatePassword = (password: string): void => {
+    // Simple validation for now
+    if (!password) {
+      dispatch(setPasswordError("Password is required"));
+    } else {
+      dispatch(clearPasswordError());
+    }
+  };
+
+  const handleLogin = async (): Promise<void> => {
+    console.log("handleLogin called");
     validateEmail(email);
     validatePassword(password);
 
     // Only proceed if both inputs are valid
-    if (email && password) {
-      setIsLoading(true);
-      // Simulate a short delay to show loading state
-      setTimeout(() => {
-        setIsLoggedIn(true);
-        router.replace("/checkin-screen");
-        setIsLoading(false);
-      }, 1000);
+    if (!email || !password) {
+      console.log("Missing email or password. Aborting login.");
+      Alert.alert("Error", "Please fill in both email and password.");
+      return;
+    }
+
+    try {
+      dispatch(loginStart());
+      console.log("loginStart dispatched");
+
+      // Call the login API from your auth service.
+      // Expected response shape:
+      // { access, refresh, user_detail, corporate_park_detail, role_detail, permission }
+      const response = await login(email, password);
+      console.log("API response received:", response);
+
+      // Destructure the response values
+      const {
+        access,
+        refresh,
+        user_detail,
+        corporate_park_detail,
+        role_detail,
+        permission,
+      } = response;
+
+      console.log("Extracted values:", {
+        access,
+        refresh,
+        user_detail,
+        corporate_park_detail,
+        role_detail,
+        permission,
+      });
+
+      // Build the user object according to our Redux state interface
+      const user = {
+        id: user_detail.id,
+        email: user_detail.email,
+        corporateParkId: corporate_park_detail.id,
+        corporateParkName: corporate_park_detail.corporate_park_name,
+        roleId: role_detail.id,
+        roleName: role_detail.role_name,
+        permissions: permission, // Expected to be an object (Record<string, string[]>)
+      };
+
+      console.log("Constructed user object:", user);
+
+      // Dispatch loginSuccess with the user and token details
+      dispatch(
+        loginSuccess({
+          user,
+          accessToken: access,
+          refreshToken: refresh,
+        })
+      );
+      dispatch(setCorporateParkName(corporate_park_detail.corporate_park_name));
+      console.log("Corporate park name dispatched to global store");
+      console.log("loginSuccess dispatched");
+
+      // Navigate to the checkin screen after successful login
+      router.replace("/checkin-screen");
+      console.log("Navigation to checkin-screen complete");
+    } catch (error: any) {
+      console.error("Login failed:", error.toJSON ? error.toJSON() : error);
+
+      // If the error indicates a network error, attempt offline login
+      if (error.message && error.message.includes("Network Error")) {
+        console.log("Network error detected. Attempting offline login...");
+        try {
+          const userCollection = database.get<User>("users");
+          const storedUsers = await userCollection
+            .query(
+              // Query for a stored user with the same email
+              Q.where("email", email)
+            )
+            .fetch();
+          console.log(
+            "Offline query result, storedUsers count:",
+            storedUsers.length
+          );
+          if (storedUsers.length > 0) {
+            const storedUser = storedUsers[0];
+            console.log("Stored user found:", storedUser);
+            dispatch(
+              loginSuccess({
+                user: {
+                  id: Number(storedUser.userId),
+                  email: storedUser.email,
+                  corporateParkId: storedUser.corporateParkId,
+                  corporateParkName: storedUser.corporateParkName,
+                  roleId: storedUser.roleId,
+                  roleName: storedUser.roleName,
+                  permissions: storedUser.permissions
+                    ? JSON.parse(storedUser.permissions)
+                    : {},
+                },
+                accessToken: storedUser.accessToken,
+                refreshToken: storedUser.refreshToken,
+              })
+            );
+            console.log("Offline login success dispatched");
+            router.replace("/checkin-screen");
+            console.log("Offline navigation to checkin-screen complete");
+            return;
+          } else {
+            Alert.alert(
+              "Login Failed",
+              "No offline credentials found for this email."
+            );
+          }
+        } catch (offlineError) {
+          console.error("Offline login error:", offlineError);
+          Alert.alert(
+            "Login Failed",
+            "Offline login failed. Please try again later."
+          );
+        }
+      } else {
+        Alert.alert(
+          "Login Failed",
+          "Invalid email or password. Please try again."
+        );
+      }
+      dispatch(loginFailure("Invalid email or password"));
     }
   };
 
@@ -71,6 +233,24 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   const handleSignup = () => {
     // Will implement later
+  };
+
+  const handleClearEmail = (): void => {
+    setEmail("");
+    dispatch(clearEmailError());
+  };
+
+  const handleClearPassword = (): void => {
+    setPassword("");
+    dispatch(clearPasswordError());
+  };
+
+  const togglePasswordVisibility = (): void => {
+    setShowPassword(!showPassword);
+  };
+
+  const handleScreenPress = () => {
+    Keyboard.dismiss();
   };
 
   const [fontsLoaded] = useFonts({
@@ -86,55 +266,11 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       </View>
     );
   }
-  const validateEmail = (email: string): void => {
-    // Simple validation for now
-    if (!email) {
-      setIsEmailValid(false);
-      setEmailError("Email is required");
-    } else {
-      setIsEmailValid(true);
-      setEmailError(null);
-    }
-  };
-
-  const validatePassword = (password: string): void => {
-    // Simple validation for now
-    if (!password) {
-      setIsPasswordValid(false);
-      setPasswordError("Password is required");
-    } else {
-      setIsPasswordValid(true);
-      setPasswordError(null);
-    }
-  };
-
-  const handleClearEmail = (): void => {
-    setEmail("");
-    setEmailError(null);
-    setIsEmailValid(true);
-  };
-
-  const handleClearPassword = (): void => {
-    setPassword("");
-    setPasswordError(null);
-    setIsPasswordValid(true);
-  };
-
-  const clearEmailError = (): void => {
-    setEmailError(null);
-    setIsEmailValid(true);
-  };
-
-  const clearPasswordError = (): void => {
-    setPasswordError(null);
-    setIsPasswordValid(true);
-  };
-
-  const togglePasswordVisibility = (): void => {
-    setShowPassword(!showPassword);
-  };
-  const handleScreenPress = () => {
-    Keyboard.dismiss();
+  const debugFetchUser = async () => {
+    const userCollection = database.get<User>("users");
+    const storedUsers = await userCollection.query().fetch();
+    console.log("Stored Users:", storedUsers);
+    alert(`Stored Users: ${storedUsers.length}`);
   };
 
   return (
@@ -151,6 +287,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
             <Text style={styles.welcomeText}>Hi, Welcome Back</Text>
             <Text style={styles.infoText}>Login to your account</Text>
+
+            <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} />
 
             {/* Email Input */}
             <View style={styles.inputContainer}>
@@ -201,7 +339,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   ) : null
                 }
                 selectionColor="#03045E"
-                onFocus={clearEmailError}
+                onFocus={() => clearPasswordError()}
               />
               {emailError ? (
                 <Text
@@ -264,7 +402,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   />
                 }
                 selectionColor="#03045E"
-                onFocus={clearPasswordError}
+                onFocus={() => clearPasswordError()}
               />
               {passwordError ? (
                 <Text

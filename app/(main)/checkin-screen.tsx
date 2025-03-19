@@ -11,9 +11,11 @@ import {
   useWindowDimensions,
   Platform,
 } from "react-native";
+import { useSelector } from "react-redux";
 import { useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
+import { RootState } from "../store";
 
 export default function CheckinScreen() {
   const router = useRouter();
@@ -21,7 +23,9 @@ export default function CheckinScreen() {
   const responsiveFontSize = 16 / fontScale;
   const windowWidth = Dimensions.get("window").width;
   const windowHeight = Dimensions.get("window").height;
-
+  const corporateParkName = useSelector(
+    (state: RootState) => state.global.corporateParkName
+  );
   // Set status bar to hidden when component mounts
   useEffect(() => {
     StatusBar.setHidden(true, "none");
@@ -65,7 +69,7 @@ export default function CheckinScreen() {
           <View style={styles.centeredContent}>
             {/* Welcome Header */}
             <Text style={styles.welcomeText}>
-              WELCOME TO SAGAR TECH PLAZA B
+              WELCOME TO {corporateParkName.toUpperCase()}
             </Text>
 
             {/* Company Logo */}

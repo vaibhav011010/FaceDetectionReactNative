@@ -16,11 +16,36 @@ import {
   SafeAreaView,
   Platform,
   Modal,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { TextInput as PaperTextInput } from "react-native-paper";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useDispatch, useSelector } from "react-redux";
+import {
+  setVisitorName,
+  setVisitorMobile,
+  setVisitingCompany,
+  clearVisitorName,
+  clearVisitorMobile,
+  clearVisitingCompany,
+  fetchCompanies,
+  selectCompany,
+  setCompanyDropdownVisible,
+  submitVisitorForm,
+  selectVisitorName,
+  selectVisitorMobile,
+  selectVisitingCompany,
+  selectIsLoading,
+  selectIsLoadingCompanies,
+  setIsLoadingCompanies,
+  selectFilteredCompanies,
+  selectShowCompanyDropdown,
+} from "../store/slices/visitorSlice";
+import { AppDispatch, RootState } from "../store";
+
+let searchTimeout: NodeJS.Timeout | null = null;
 
 export default function VisitorFormScreen() {
   const router = useRouter();
@@ -28,162 +53,173 @@ export default function VisitorFormScreen() {
   const responsiveFontSize = 18 / fontScale;
   const scrollViewRef = useRef<ScrollView>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
-
-  // State for form fields
-  const [visitorName, setVisitorName] = useState("");
-  const [visitorMobile, setVisitorMobile] = useState("");
-  const [visitingCompany, setVisitingCompany] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
-  const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
-  const [filteredCompanies, setFilteredCompanies] = useState<
-    Array<{ label: string; value: string }>
-  >([]);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const {
+    filteredCompanies,
+    isLoadingCompanies,
+    visitingCompany,
+    showCompanyDropdown,
+  } = useSelector((state: RootState) => state.visitor);
+  // Redux hooks
+  const dispatch = useDispatch<AppDispatch>();
+  const [displayCompanyName, setDisplayCompanyName] = useState("");
+  // Get state from Redux store
+  const visitorName = useSelector(selectVisitorName);
+  const visitorMobile = useSelector(selectVisitorMobile);
+  // const visitingCompany = useSelector(selectVisitingCompany);
+  const isLoading = useSelector(selectIsLoading);
+  // const isLoadingCompanies = useSelector(selectIsLoadingCompanies);
+  //const filteredCompanies = useSelector(selectFilteredCompanies);
+  // const showCompanyDropdown = useSelector(selectShowCompanyDropdown);
+  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(
+    null
+  );
 
-  // Sample company data (will be replaced with API data)
-  const [companies, setCompanies] = useState([
-    { label: "Company A", value: "companyA" },
-    { label: "Company B", value: "companyB" },
-    { label: "Company C", value: "companyC" },
-    { label: "Tech Solutions", value: "techSolutions" },
-    { label: "Digital Innovations", value: "digitalInnovations" },
-    { label: "Global Systems", value: "globalSystems" },
-    { label: "Smart Technologies", value: "smartTech" },
-    { label: "Future Enterprises", value: "futureEnterprises" },
-    { label: "Innovative Labs", value: "innovativeLabs" },
-    { label: "Peak Performance", value: "peakPerformance" },
-  ]);
-
-  // Function to handle typing in company field and filter results
+  // Handle company search
   const handleCompanySearch = (text: string) => {
-    setVisitingCompany(text);
+    setDisplayCompanyName(text); // Update display text
+    dispatch(setVisitingCompany(text));
 
-    // This is where you'd typically call your API
-    // For now, we'll simulate API behavior by filtering local data
-    setIsLoadingCompanies(true);
+    // Clear any previous timer
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
 
-    // Simulate network delay
-    setTimeout(() => {
-      if (text.trim() === "") {
-        setFilteredCompanies([]);
-      } else {
-        const filtered = companies.filter((company) =>
-          company.label.toLowerCase().includes(text.toLowerCase())
-        );
-        setFilteredCompanies(filtered);
-      }
-      setIsLoadingCompanies(false);
+    // Set a new timer to call API after a delay (300ms)
+    const timeout = setTimeout(() => {
+      dispatch(fetchCompanies(text));
+      // Optionally, show dropdown when results come in
+      dispatch(setCompanyDropdownVisible(true));
     }, 300);
+    setSearchTimeout(timeout);
   };
-
-  // Function to select a company from dropdown
-  const selectCompany = (company: { label: string; value: string }) => {
-    setVisitingCompany(company.label);
-    setShowCompanyDropdown(false);
-  };
+  // Add this effect to your component
+  useEffect(() => {
+    // When filtered companies change and there are results, show the dropdown
+    if (
+      filteredCompanies.length > 0 &&
+      typeof visitingCompany === "string" &&
+      visitingCompany.trim() !== ""
+    ) {
+      dispatch(setCompanyDropdownVisible(true));
+    }
+  }, [filteredCompanies, visitingCompany]);
 
   // Keyboard listeners to adjust scroll position
-  // useEffect(() => {
-  //   const keyboardDidShowListener = Keyboard.addListener(
-  //     "keyboardDidShow",
-  //     () => {
-  //       setKeyboardVisible(true);
-  //       // Scroll down to make sure dropdown is visible
-  //       if (scrollViewRef.current) {
-  //         setTimeout(() => {
-  //           scrollViewRef.current?.scrollToEnd({ animated: true });
-  //         }, 100);
-  //       }
-  //     }
-  //   );
-  //   const keyboardDidHideListener = Keyboard.addListener(
-  //     "keyboardDidHide",
-  //     () => {
-  //       setKeyboardVisible(false);
-  //     }
-  //   );
-  //   // Clean up listeners when component unmounts
-  //   return () => {
-  //     keyboardDidShowListener.remove();
-  //     keyboardDidHideListener.remove();
-  //   };
-  // }, []);
   useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      "keyboardDidShow",
+      () => {
+        setKeyboardVisible(true);
+        // Scroll down to make sure dropdown is visible
+        if (scrollViewRef.current) {
+          setTimeout(() => {
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+          }, 100);
+        }
+      }
+    );
     StatusBar.setHidden(true, "none");
-
-    // Clean up when component unmounts
+    const keyboardDidHideListener = Keyboard.addListener(
+      "keyboardDidHide",
+      () => {
+        setKeyboardVisible(false);
+      }
+    );
+    // Clean up listeners when component unmounts
     return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
       StatusBar.setHidden(false, "none");
     };
   }, []);
 
   // When company field gets focus, scroll to it
   const handleCompanyFocus = () => {
-    setShowCompanyDropdown(true);
+    dispatch(setCompanyDropdownVisible(true));
     if (scrollViewRef.current) {
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
   };
+  // Validate form fields
+  // Validate form fields
+  const validateFields = (): boolean => {
+    if (!visitorName.trim()) {
+      Alert.alert("Validation Error", "Please enter visitor name");
+      return false;
+    }
+    if (!visitorMobile.trim()) {
+      Alert.alert("Validation Error", "Please enter mobile number");
+      return false;
+    }
+
+    // Modified company validation to handle both string and number values
+    if (
+      visitingCompany === null ||
+      visitingCompany === undefined ||
+      (typeof visitingCompany === "string" && visitingCompany.trim() === "") ||
+      visitingCompany === 0 // In case it's storing 0 as a falsy value
+    ) {
+      Alert.alert("Validation Error", "Please select a company");
+      return false;
+    }
+    return true;
+  };
 
   // Handle Next button press
   const handleNext = () => {
-    setIsLoading(true);
-    // Simulate an API call or validation
-    setTimeout(() => {
-      setIsLoading(false);
-      router.replace("/camera-screen");
-    }, 2000);
+    if (!validateFields()) return;
+    // Do not insert into the database here.
+    // The form data is stored in Redux and will be used in the camera screen.
+    router.replace("/camera-screen");
+  };
+  // Make sure this function is being called when a company is selected from the dropdown
+  const handleSelectCompany = (company: { label: string; value: any }) => {
+    console.log("Selected company:", company);
+    Keyboard.dismiss();
+    setDisplayCompanyName(company.label);
+    dispatch(
+      selectCompany({
+        label: company.label,
+        value: String(company.value), // Ensure it's a string
+      })
+    );
+    // Hide the dropdown immediately
+    dispatch(setCompanyDropdownVisible(false));
   };
 
-  const handleClearCompany = (): void => {
-    setVisitingCompany("");
-    setFilteredCompanies([]);
+  const handleClearCompany = () => {
+    setDisplayCompanyName(""); // Clear display text
+    dispatch(clearVisitingCompany());
   };
-
-  const handleClearName = (): void => {
-    setVisitorName("");
+  const handleClearName = () => {
+    dispatch(clearVisitorName());
   };
 
   const handleScreenPress = () => {
     Keyboard.dismiss();
-    setShowCompanyDropdown(false);
+    dispatch(setCompanyDropdownVisible(false));
   };
 
-  const handleClearMobile = (): void => {
-    setVisitorMobile("");
+  const handleClearMobile = () => {
+    dispatch(clearVisitorMobile());
   };
 
   const confirmCancel = () => {
     setShowCancelModal(false);
-    console.log("DEBUG: Canceling and navigating to check-in screen");
+    // Reset visitor form state by dispatching the resetForm or clear actions
+    dispatch(clearVisitorName());
+    dispatch(clearVisitorMobile());
+    dispatch(clearVisitingCompany());
     router.replace("/checkin-screen");
-    // Add logic for cancellation (e.g., navigate back or clear form)
   };
 
   const handleCancel = () => {
     setShowCancelModal(true);
-    console.log("DEBUG: Canceling and navigating to check-in screen");
   };
 
-  // Function that will later be used to fetch companies from API
-  const fetchCompaniesFromAPI = async (searchText: string) => {
-    // This is a placeholder for your actual API implementation
-    try {
-      // Example API call:
-      // const response = await fetch(`your-api-endpoint?search=${searchText}`);
-      // const data = await response.json();
-      // setFilteredCompanies(data.map(item => ({ label: item.name, value: item.id })));
-
-      // For now, we're using the simulated data in handleCompanySearch
-      console.log("Will fetch companies with search term:", searchText);
-    } catch (error) {
-      console.error("Error fetching companies:", error);
-      // Handle error appropriately
-    }
-  };
   const windowWidth = Dimensions.get("window").width;
   const windowHeight = Dimensions.get("window").height;
   return (
@@ -270,7 +306,7 @@ export default function VisitorFormScreen() {
                     }
                     textColor="#03045E"
                     value={visitorName}
-                    onChangeText={setVisitorName}
+                    onChangeText={(text) => dispatch(setVisitorName(text))}
                     outlineStyle={{
                       borderWidth: 1,
                       borderRadius: 5,
@@ -319,8 +355,9 @@ export default function VisitorFormScreen() {
                       </Text>
                     }
                     textColor="#03045E"
+                    maxLength={10}
                     value={visitorMobile}
-                    onChangeText={setVisitorMobile}
+                    onChangeText={(text) => dispatch(setVisitorMobile(text))}
                     outlineStyle={{
                       borderWidth: 1,
                       borderRadius: 5,
@@ -370,7 +407,7 @@ export default function VisitorFormScreen() {
                       </Text>
                     }
                     textColor="#03045E"
-                    value={visitingCompany}
+                    value={displayCompanyName}
                     onChangeText={handleCompanySearch}
                     onFocus={handleCompanyFocus}
                     outlineStyle={{
@@ -386,7 +423,7 @@ export default function VisitorFormScreen() {
                       },
                     }}
                     right={
-                      visitingCompany ? (
+                      displayCompanyName ? (
                         <PaperTextInput.Icon
                           icon="close-circle-outline"
                           onPress={handleClearCompany}
@@ -415,7 +452,7 @@ export default function VisitorFormScreen() {
                           renderItem={({ item }) => (
                             <TouchableOpacity
                               style={styles.dropdownItem}
-                              onPress={() => selectCompany(item)}
+                              onPress={() => handleSelectCompany(item)}
                             >
                               <Text style={styles.dropdownText}>
                                 {item.label}
@@ -430,7 +467,7 @@ export default function VisitorFormScreen() {
 
                 {/* Add empty space to ensure scrolling works well */}
                 {showCompanyDropdown && filteredCompanies.length > 0 && (
-                  <View style={{ height: 200 }} />
+                  <View style={{ height: 160 }} />
                 )}
 
                 <View style={styles.buttonContainer}>

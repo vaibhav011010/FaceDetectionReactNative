@@ -7,6 +7,7 @@
     "orientation": "portrait",
     "entryPoint": "expo-router/entry",
     "plugins": [
+      ["@morrowdigital/watermelondb-expo-plugin"],
       [
         "react-native-vision-camera",
         {
@@ -22,8 +23,18 @@
         {
           "root": "./app"
         }
+      ],
+      "expo-sqlite",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "-keep class com.nozbe.watermelondb.** { *; }"
+          }
+        }
       ]
     ],
+
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
@@ -33,7 +44,7 @@
       "backgroundColor": "#ffffff"
     },
     "experiments": {
-      "bridgeless": false
+      "bridgeless": true
     },
     "ios": {
       "supportsTablet": true,

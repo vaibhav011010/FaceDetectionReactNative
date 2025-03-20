@@ -78,7 +78,7 @@ export default function VisitorFormScreen() {
   // Handle company search
   const handleCompanySearch = (text: string) => {
     setDisplayCompanyName(text); // Update display text
-    dispatch(setVisitingCompany(text));
+    dispatch(setVisitingCompany(text as any));
 
     // Clear any previous timer
     if (searchTimeout) {

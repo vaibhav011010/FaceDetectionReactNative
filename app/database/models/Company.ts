@@ -1,10 +1,9 @@
-// models/Company.ts
 import { Model } from "@nozbe/watermelondb";
-import { field } from "@nozbe/watermelondb/decorators";
+import { field, text } from "@nozbe/watermelondb/decorators";
 
 export default class Company extends Model {
   static table = "companies";
 
-  @field("label") label!: string;
-  @field("value") value!: string;
+  @field("tenant_id") tenantId!: number; // Store tenant ID
+  @text("tenant_name") tenantName!: string;
 }

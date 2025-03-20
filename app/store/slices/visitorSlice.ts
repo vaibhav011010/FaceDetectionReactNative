@@ -13,7 +13,7 @@ interface Company {
 interface VisitorState {
   visitorName: string;
   visitorMobile: string;
-  visitingCompany: string | number;
+  visitingCompany: number | null | string;
   photo: string | null; // Base64 or URI of the photo
   filteredCompanies: Company[];
   isLoading: boolean;
@@ -30,7 +30,7 @@ interface VisitorState {
 const initialState: VisitorState = {
   visitorName: "",
   visitorMobile: "",
-  visitingCompany: "",
+  visitingCompany: null,
 
   photo: null,
   filteredCompanies: [],
@@ -54,7 +54,7 @@ const visitorSlice = createSlice({
     setVisitorMobile: (state, action: PayloadAction<string>) => {
       state.visitorMobile = action.payload;
     },
-    setVisitingCompany: (state, action: PayloadAction<string>) => {
+    setVisitingCompany: (state, action: PayloadAction<number | null>) => {
       state.visitingCompany = action.payload;
     },
     setPhoto: (state, action: PayloadAction<string>) => {
@@ -67,7 +67,7 @@ const visitorSlice = createSlice({
       state.visitorMobile = "";
     },
     clearVisitingCompany: (state) => {
-      state.visitingCompany = "";
+      state.visitingCompany = null;
       state.filteredCompanies = [];
     },
     clearPhoto: (state) => {
@@ -99,9 +99,10 @@ const visitorSlice = createSlice({
     // When a company is selected, store its id (value) instead of the label
     // In your Redux slice
     selectCompany: (state, action: PayloadAction<Company>) => {
-      state.visitingCompany = String(action.payload.value); // Convert to string
+      state.visitingCompany = Number(action.payload.value); // Ensure ID is stored as a number
       state.showCompanyDropdown = false;
     },
+
     setIsLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
     },
@@ -204,9 +205,10 @@ export const fetchCompanies = (searchTerm: string) => async (dispatch: any) => {
     const mappedCompanies = companies.map(
       (company: { id: number; tenant_name: string }) => ({
         label: company.tenant_name,
-        value: String(company.id), // Convert to string for consistency
+        value: company.id, // Ensure value is the tenant ID
       })
     );
+
     console.log("Mapped Companies:", mappedCompanies);
 
     // Save the mapped companies to the local database
@@ -220,8 +222,8 @@ export const fetchCompanies = (searchTerm: string) => async (dispatch: any) => {
       // Option 2: Alternatively, update or merge records instead of clearing
       for (const comp of mappedCompanies) {
         await companiesCollection.create((record: any) => {
-          record.label = comp.label;
-          record.value = comp.value;
+          record.tenant_id = comp.value;
+          record.tenant_name = comp.label;
         });
       }
     });
@@ -235,8 +237,8 @@ export const fetchCompanies = (searchTerm: string) => async (dispatch: any) => {
       const companiesCollection = database.get("companies");
       const localCompanies = await companiesCollection.query().fetch();
       const mappedLocalCompanies = localCompanies.map((comp: any) => ({
-        label: comp.label,
-        value: comp.value,
+        label: comp.tenant_name,
+        value: comp.tenant_id,
       }));
       console.log("Loaded companies from local DB:", mappedLocalCompanies);
       dispatch(setFilteredCompanies(mappedLocalCompanies));

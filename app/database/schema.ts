@@ -1,5 +1,6 @@
 import { appSchema, tableSchema } from "@nozbe/watermelondb";
 
+// Visitor Schema
 export const visitorSchema = tableSchema({
   name: "visitors",
   columns: [
@@ -11,10 +12,22 @@ export const visitorSchema = tableSchema({
     { name: "is_synced", type: "boolean" },
   ],
 });
+
+// ✅ Add `companies` table to schema
+export const companiesSchema = tableSchema({
+  name: "companies",
+  columns: [
+    { name: "tenant_id", type: "number" },
+    { name: "tenant_name", type: "string" },
+  ],
+});
+
+// Final Schema
 const schema = appSchema({
-  version: 3, // bumped version
+  version: 5, // Increment version
   tables: [
     visitorSchema,
+    companiesSchema, // ✅ Add this
     tableSchema({
       name: "users",
       columns: [

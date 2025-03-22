@@ -10,7 +10,7 @@ export default class User extends Model {
   @field("corporate_park_name") corporateParkName!: string;
   @field("role_id") roleId!: number;
   @field("role_name") roleName!: string;
-  @field("permissions") permissions!: string; // Store as JSON string
+  @field("permissions") permissions!: string;
   @field("access_token") accessToken!: string;
   @field("refresh_token") refreshToken!: string;
 }

@@ -10,4 +10,5 @@ export default class Visitor extends Model {
   @field("visitor_photo") visitorPhoto!: string;
   @field("timestamp") timestamp!: number;
   @field("is_synced") isSynced!: boolean;
+  @field("server_id") serverId: string | number | null | undefined;
 }

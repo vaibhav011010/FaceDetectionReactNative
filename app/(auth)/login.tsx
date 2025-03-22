@@ -95,11 +95,15 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   const handleLogin = async (): Promise<void> => {
     console.log("handleLogin called");
-    validateEmail(email);
+
+    // Always trim the email to remove unwanted spaces
+    const trimmedEmail = email.trim();
+    // Use the trimmed email in validations and API call
+    validateEmail(trimmedEmail);
     validatePassword(password);
 
     // Only proceed if both inputs are valid
-    if (!email || !password) {
+    if (!trimmedEmail || !password) {
       console.log("Missing email or password. Aborting login.");
       Alert.alert("Error", "Please fill in both email and password.");
       return;
@@ -109,10 +113,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       dispatch(loginStart());
       console.log("loginStart dispatched");
 
-      // Call the login API from your auth service.
-      // Expected response shape:
-      // { access, refresh, user_detail, corporate_park_detail, role_detail, permission }
-      const response = await login(email, password);
+      // Call the login API using trimmedEmail
+      const response = await login(trimmedEmail, password);
       console.log("API response received:", response);
 
       // Destructure the response values
@@ -163,7 +165,14 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       router.replace("/checkin-screen");
       console.log("Navigation to checkin-screen complete");
     } catch (error: any) {
+      // Log the detailed error for debugging purposes
       console.error("Login failed:", error.toJSON ? error.toJSON() : error);
+
+      // If the error has a response with a detailed message, use it
+      const detailedError =
+        error.response && error.response.data && error.response.data.message
+          ? error.response.data.message
+          : error.message || "Invalid email or password. Please try again.";
 
       // If the error indicates a network error, attempt offline login
       if (error.message && error.message.includes("Network Error")) {
@@ -173,7 +182,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
           const storedUsers = await userCollection
             .query(
               // Query for a stored user with the same email
-              Q.where("email", email)
+              Q.where("email", trimmedEmail)
             )
             .fetch();
           console.log(
@@ -218,12 +227,10 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
           );
         }
       } else {
-        Alert.alert(
-          "Login Failed",
-          "Invalid email or password. Please try again."
-        );
+        // Display the detailed error message from the response if available
+        Alert.alert("Login Failed", detailedError);
       }
-      dispatch(loginFailure("Invalid email or password"));
+      dispatch(loginFailure(detailedError));
     }
   };
 

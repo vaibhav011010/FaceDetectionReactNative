@@ -17,6 +17,7 @@ import {
   Platform,
   Modal,
   Alert,
+  Animated,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { TextInput as PaperTextInput } from "react-native-paper";
@@ -45,7 +46,7 @@ import {
 } from "../store/slices/visitorSlice";
 import { AppDispatch, RootState } from "../store";
 
-let searchTimeout: NodeJS.Timeout | null = null;
+const windowWidth = Dimensions.get("window").width;
 
 export default function VisitorFormScreen() {
   const router = useRouter();
@@ -53,6 +54,12 @@ export default function VisitorFormScreen() {
   const responsiveFontSize = 18 / fontScale;
   const scrollViewRef = useRef<ScrollView>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const currentSlide = useRef(new Animated.Value(0)).current;
+
+  const [isReady, setIsReady] = useState(false);
+
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const {
     filteredCompanies,
@@ -154,13 +161,19 @@ export default function VisitorFormScreen() {
       Alert.alert("Validation Error", "Please enter mobile number");
       return false;
     }
-
-    // Modified company validation to handle both string and number values
+    // Validate that mobile number is exactly 10 digits
+    if (visitorMobile.length !== 10) {
+      Alert.alert(
+        "Validation Error",
+        "Mobile number must be exactly 10 digits"
+      );
+      return false;
+    }
     if (
       visitingCompany === null ||
       visitingCompany === undefined ||
       (typeof visitingCompany === "string" && visitingCompany.trim() === "") ||
-      visitingCompany === 0 // In case it's storing 0 as a falsy value
+      visitingCompany === 0
     ) {
       Alert.alert("Validation Error", "Please select a company");
       return false;
@@ -170,11 +183,19 @@ export default function VisitorFormScreen() {
 
   // Handle Next button press
   const handleNext = () => {
+    // Assume validateFields returns true if fields are valid
     if (!validateFields()) return;
-    // Do not insert into the database here.
-    // The form data is stored in Redux and will be used in the camera screen.
-    router.replace("/camera-screen");
+    Animated.parallel([
+      Animated.timing(currentSlide, {
+        toValue: -windowWidth,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      router.replace("/camera-screen");
+    });
   };
+
   // Make sure this function is being called when a company is selected from the dropdown
   const handleSelectCompany = (company: { label: string; value: any }) => {
     console.log("Selected company:", company);
@@ -219,6 +240,19 @@ export default function VisitorFormScreen() {
   const handleCancel = () => {
     setShowCancelModal(true);
   };
+  useEffect(() => {
+    // Simulate asset loading or do your async preloading here
+    // e.g., Promise.all([loadAssets(), loadData()]).then(() => setIsReady(true));
+    setTimeout(() => setIsReady(true), 500); // temporary example delay
+  }, []);
+
+  if (!isReady) {
+    return (
+      <View style={styles.loadingContainer1}>
+        <ActivityIndicator size="large" color="#03045E" />
+      </View>
+    );
+  }
 
   const windowWidth = Dimensions.get("window").width;
   const windowHeight = Dimensions.get("window").height;
@@ -228,282 +262,290 @@ export default function VisitorFormScreen() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <TouchableWithoutFeedback onPress={handleScreenPress}>
-        <View
-          style={[
-            styles.borderContainer,
-            { width: windowWidth, height: windowHeight + 52 },
-          ]}
+        <Animated.View
+          style={[styles.screen, { transform: [{ translateX: currentSlide }] }]}
         >
-          <View style={styles.container}>
-            <ScrollView
-              ref={scrollViewRef}
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollViewContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={styles.formContainer}>
-                <Modal
-                  visible={showCancelModal}
-                  transparent={true}
-                  animationType="fade"
-                >
-                  <View style={styles.modalOverlay}>
-                    <View style={styles.modalContainer}>
-                      <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Confirm Cancel</Text>
-                      </View>
-                      <View style={styles.modalBody}>
-                        <Text style={styles.modalTextCancel}>
-                          Are you sure you want to cancel?
-                        </Text>
-                      </View>
-                      <View style={styles.modalFooter}>
-                        <TouchableOpacity
-                          style={[styles.modalButton, styles.modalCancelButton]}
-                          onPress={() => setShowCancelModal(false)}
-                        >
-                          <Text style={styles.modalCancelButtonText}>
-                            Cancel
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.modalButton,
-                            styles.modalConfirmButton,
-                          ]}
-                          onPress={confirmCancel}
-                        >
-                          <Text style={styles.modalConfirmButtonText}>
-                            Confirm
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                </Modal>
-
-                {/* Visitor Name Input */}
-                <View style={styles.inputContainer}>
-                  <PaperTextInput
-                    left={
-                      <PaperTextInput.Icon
-                        icon="account"
-                        color="#03045E"
-                        size={25}
-                      />
-                    }
-                    label={
-                      <Text
-                        style={{
-                          color: "#03045E",
-                          fontFamily: "OpenSans_Condensed-Regular",
-                          fontSize: responsiveFontSize,
-                        }}
-                      >
-                        Visitor Name*
-                      </Text>
-                    }
-                    textColor="#03045E"
-                    value={visitorName}
-                    onChangeText={(text) => dispatch(setVisitorName(text))}
-                    outlineStyle={{
-                      borderWidth: 1,
-                      borderRadius: 5,
-                      borderColor: "#03045e",
-                    }}
-                    style={styles.textInput}
-                    theme={{
-                      colors: {
-                        primary: "#03045E",
-                        text: "#03045E",
-                      },
-                    }}
-                    right={
-                      visitorName ? (
-                        <PaperTextInput.Icon
-                          icon="close-circle-outline"
-                          onPress={handleClearName}
-                          color="#03045E"
-                          size={25}
-                        />
-                      ) : null
-                    }
-                    selectionColor="#03045E"
-                  />
-                </View>
-
-                {/* Visitor Mobile Input */}
-                <View style={styles.inputContainer}>
-                  <PaperTextInput
-                    left={
-                      <PaperTextInput.Icon
-                        icon="phone"
-                        color="#03045E"
-                        size={25}
-                      />
-                    }
-                    label={
-                      <Text
-                        style={{
-                          color: "#03045E",
-                          fontFamily: "OpenSans_Condensed-Regular",
-                          fontSize: responsiveFontSize,
-                        }}
-                      >
-                        Visitor Mobile*
-                      </Text>
-                    }
-                    textColor="#03045E"
-                    maxLength={10}
-                    value={visitorMobile}
-                    onChangeText={(text) => dispatch(setVisitorMobile(text))}
-                    outlineStyle={{
-                      borderWidth: 1,
-                      borderRadius: 5,
-                      borderColor: "#03045e",
-                    }}
-                    style={styles.textInput}
-                    theme={{
-                      colors: {
-                        primary: "#03045E",
-                        text: "#03045E",
-                      },
-                    }}
-                    keyboardType="phone-pad"
-                    right={
-                      visitorMobile ? (
-                        <PaperTextInput.Icon
-                          icon="close-circle-outline"
-                          onPress={handleClearMobile}
-                          color="#03045E"
-                          size={25}
-                        />
-                      ) : null
-                    }
-                    selectionColor="#03045E"
-                  />
-                </View>
-
-                {/* Visiting Company Input with Dropdown */}
-                <View style={styles.inputContainer}>
-                  <PaperTextInput
-                    left={
-                      <PaperTextInput.Icon
-                        icon="domain"
-                        color="#03045E"
-                        size={25}
-                      />
-                    }
-                    label={
-                      <Text
-                        style={{
-                          color: "#03045E",
-                          fontFamily: "OpenSans_Condensed-Regular",
-                          fontSize: responsiveFontSize,
-                        }}
-                      >
-                        Visiting Company Name*
-                      </Text>
-                    }
-                    textColor="#03045E"
-                    value={displayCompanyName}
-                    onChangeText={handleCompanySearch}
-                    onFocus={handleCompanyFocus}
-                    outlineStyle={{
-                      borderWidth: 1,
-                      borderRadius: 5,
-                      borderColor: "#03045e",
-                    }}
-                    style={styles.textInput}
-                    theme={{
-                      colors: {
-                        primary: "#03045E",
-                        text: "#03045E",
-                      },
-                    }}
-                    right={
-                      displayCompanyName ? (
-                        <PaperTextInput.Icon
-                          icon="close-circle-outline"
-                          onPress={handleClearCompany}
-                          color="#03045E"
-                          size={25}
-                        />
-                      ) : null
-                    }
-                    selectionColor="#03045E"
-                  />
-
-                  {/* Company Dropdown */}
-                  {showCompanyDropdown && filteredCompanies.length > 0 && (
-                    <View style={styles.dropdownContainer}>
-                      {isLoadingCompanies ? (
-                        <View style={styles.loadingDropdown}>
-                          <ActivityIndicator size="small" color="#03045E" />
+          <View
+            style={[
+              styles.borderContainer,
+              { width: windowWidth, height: windowHeight + 52 },
+            ]}
+          >
+            <View style={styles.container}>
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollViewContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={styles.formContainer}>
+                  <Modal
+                    visible={showCancelModal}
+                    transparent={true}
+                    animationType="fade"
+                  >
+                    <View style={styles.modalOverlay}>
+                      <View style={styles.modalContainer}>
+                        <View style={styles.modalHeader}>
+                          <Text style={styles.modalTitle}>Confirm Cancel</Text>
                         </View>
-                      ) : (
-                        <FlatList
-                          data={filteredCompanies}
-                          keyExtractor={(item) => item.value}
-                          keyboardShouldPersistTaps="handled"
-                          style={styles.dropdownList}
-                          nestedScrollEnabled={true}
-                          renderItem={({ item }) => (
-                            <TouchableOpacity
-                              style={styles.dropdownItem}
-                              onPress={() => handleSelectCompany(item)}
-                            >
-                              <Text style={styles.dropdownText}>
-                                {item.label}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        />
-                      )}
+                        <View style={styles.modalBody}>
+                          <Text style={styles.modalTextCancel}>
+                            Are you sure you want to cancel?
+                          </Text>
+                        </View>
+                        <View style={styles.modalFooter}>
+                          <TouchableOpacity
+                            style={[
+                              styles.modalButton,
+                              styles.modalCancelButton,
+                            ]}
+                            onPress={() => setShowCancelModal(false)}
+                          >
+                            <Text style={styles.modalCancelButtonText}>
+                              Cancel
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.modalButton,
+                              styles.modalConfirmButton,
+                            ]}
+                            onPress={confirmCancel}
+                          >
+                            <Text style={styles.modalConfirmButtonText}>
+                              Confirm
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
                     </View>
+                  </Modal>
+
+                  {/* Visitor Name Input */}
+                  <View style={styles.inputContainer}>
+                    <PaperTextInput
+                      left={
+                        <PaperTextInput.Icon
+                          icon="account"
+                          color="#03045E"
+                          size={25}
+                        />
+                      }
+                      label={
+                        <Text
+                          style={{
+                            color: "#03045E",
+                            fontFamily: "OpenSans_Condensed-Regular",
+                            fontSize: responsiveFontSize,
+                          }}
+                        >
+                          Visitor Name*
+                        </Text>
+                      }
+                      textColor="#03045E"
+                      maxLength={50}
+                      value={visitorName}
+                      onChangeText={(text) => dispatch(setVisitorName(text))}
+                      outlineStyle={{
+                        borderWidth: 1,
+                        borderRadius: 5,
+                        borderColor: "#03045e",
+                      }}
+                      style={styles.textInput}
+                      theme={{
+                        colors: {
+                          primary: "#03045E",
+                          text: "#03045E",
+                        },
+                      }}
+                      right={
+                        visitorName ? (
+                          <PaperTextInput.Icon
+                            icon="close-circle-outline"
+                            onPress={handleClearName}
+                            color="#03045E"
+                            size={25}
+                          />
+                        ) : null
+                      }
+                      selectionColor="#03045E"
+                    />
+                  </View>
+
+                  {/* Visitor Mobile Input */}
+                  <View style={styles.inputContainer}>
+                    <PaperTextInput
+                      left={
+                        <PaperTextInput.Icon
+                          icon="phone"
+                          color="#03045E"
+                          size={25}
+                        />
+                      }
+                      label={
+                        <Text
+                          style={{
+                            color: "#03045E",
+                            fontFamily: "OpenSans_Condensed-Regular",
+                            fontSize: responsiveFontSize,
+                          }}
+                        >
+                          Visitor Mobile*
+                        </Text>
+                      }
+                      textColor="#03045E"
+                      maxLength={10}
+                      value={visitorMobile}
+                      onChangeText={(text) => dispatch(setVisitorMobile(text))}
+                      outlineStyle={{
+                        borderWidth: 1,
+                        borderRadius: 5,
+                        borderColor: "#03045e",
+                      }}
+                      style={styles.textInput}
+                      theme={{
+                        colors: {
+                          primary: "#03045E",
+                          text: "#03045E",
+                        },
+                      }}
+                      keyboardType="phone-pad"
+                      right={
+                        visitorMobile ? (
+                          <PaperTextInput.Icon
+                            icon="close-circle-outline"
+                            onPress={handleClearMobile}
+                            color="#03045E"
+                            size={25}
+                          />
+                        ) : null
+                      }
+                      selectionColor="#03045E"
+                    />
+                  </View>
+
+                  {/* Visiting Company Input with Dropdown */}
+                  <View style={styles.inputContainer}>
+                    <PaperTextInput
+                      left={
+                        <PaperTextInput.Icon
+                          icon="domain"
+                          color="#03045E"
+                          size={25}
+                        />
+                      }
+                      label={
+                        <Text
+                          style={{
+                            color: "#03045E",
+                            fontFamily: "OpenSans_Condensed-Regular",
+                            fontSize: responsiveFontSize,
+                          }}
+                        >
+                          Visiting Company Name*
+                        </Text>
+                      }
+                      textColor="#03045E"
+                      value={displayCompanyName}
+                      onChangeText={handleCompanySearch}
+                      onFocus={handleCompanyFocus}
+                      outlineStyle={{
+                        borderWidth: 1,
+                        borderRadius: 5,
+                        borderColor: "#03045e",
+                      }}
+                      style={styles.textInput}
+                      theme={{
+                        colors: {
+                          primary: "#03045E",
+                          text: "#03045E",
+                        },
+                      }}
+                      right={
+                        displayCompanyName ? (
+                          <PaperTextInput.Icon
+                            icon="close-circle-outline"
+                            onPress={handleClearCompany}
+                            color="#03045E"
+                            size={25}
+                          />
+                        ) : null
+                      }
+                      selectionColor="#03045E"
+                    />
+
+                    {/* Company Dropdown */}
+                    {showCompanyDropdown && filteredCompanies.length > 0 && (
+                      <View style={styles.dropdownContainer}>
+                        {isLoadingCompanies ? (
+                          <View style={styles.loadingDropdown}>
+                            <ActivityIndicator size="small" color="#03045E" />
+                          </View>
+                        ) : (
+                          <FlatList
+                            data={filteredCompanies}
+                            keyExtractor={(item) => item.value}
+                            keyboardShouldPersistTaps="handled"
+                            style={styles.dropdownList}
+                            nestedScrollEnabled={true}
+                            renderItem={({ item }) => (
+                              <TouchableOpacity
+                                style={styles.dropdownItem}
+                                onPress={() => handleSelectCompany(item)}
+                              >
+                                <Text style={styles.dropdownText}>
+                                  {item.label}
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          />
+                        )}
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Add empty space to ensure scrolling works well */}
+                  {showCompanyDropdown && filteredCompanies.length > 0 && (
+                    <View style={{ height: 160 }} />
                   )}
-                </View>
 
-                {/* Add empty space to ensure scrolling works well */}
-                {showCompanyDropdown && filteredCompanies.length > 0 && (
-                  <View style={{ height: 160 }} />
+                  <View style={styles.buttonContainer}>
+                    <TouchableOpacity
+                      style={styles.cancelButton}
+                      onPress={handleCancel}
+                    >
+                      <Ionicons
+                        name="close-circle-outline"
+                        size={40}
+                        color="red"
+                      />
+                      <Text style={styles.buttonTextCancel}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.submitButton}
+                      onPress={handleNext}
+                    >
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={40}
+                        color="#03045E"
+                      />
+                      <Text style={styles.buttonTextNext}>Next</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                {isLoading && (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#03045E" />
+                  </View>
                 )}
-
-                <View style={styles.buttonContainer}>
-                  <TouchableOpacity
-                    style={styles.cancelButton}
-                    onPress={handleCancel}
-                  >
-                    <Ionicons
-                      name="close-circle-outline"
-                      size={40}
-                      color="red"
-                    />
-                    <Text style={styles.buttonTextCancel}>Cancel</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.submitButton}
-                    onPress={handleNext}
-                  >
-                    <Ionicons
-                      name="checkmark-circle-outline"
-                      size={40}
-                      color="#03045E"
-                    />
-                    <Text style={styles.buttonTextNext}>Next</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              {isLoading && (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color="#03045E" />
-                </View>
-              )}
-            </ScrollView>
+              </ScrollView>
+            </View>
           </View>
-        </View>
+        </Animated.View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
@@ -528,7 +570,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 50,
   },
-
+  screen: {
+    width: windowWidth,
+    backgroundColor: "#03045E",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   headerText: {
     fontSize: 24,
     fontFamily: "OpenSans_Condensed-Bold",
@@ -675,7 +722,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(0, 0, 0, 0.5)", // Optional: Slight background dimming
   },
-
+  loadingContainer1: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "white",
+  },
   // Dropdown styles
   dropdownContainer: {
     width: "100%",

@@ -10,10 +10,11 @@ export const visitorSchema = tableSchema({
     { name: "visitor_photo", type: "string", isOptional: true },
     { name: "timestamp", type: "number" },
     { name: "is_synced", type: "boolean" },
+    { name: "server_id", type: "number", isOptional: true },
   ],
 });
 
-// ✅ Add `companies` table to schema
+//companies
 export const companiesSchema = tableSchema({
   name: "companies",
   columns: [
@@ -24,7 +25,7 @@ export const companiesSchema = tableSchema({
 
 // Final Schema
 const schema = appSchema({
-  version: 5, // Increment version
+  version: 6, // Increment version
   tables: [
     visitorSchema,
     companiesSchema, // ✅ Add this

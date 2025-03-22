@@ -4,11 +4,13 @@ import { Platform } from "react-native";
 import schema from "./schema";
 import UserModel from "./models/User";
 import Company from "./models/Company";
+import migrations from "./migrations";
 import VisitorModel from "./models/Visitor"; // Import Visitor model
 
 // SQLite adapter configuration with platform-specific settings
 const adapter = new SQLiteAdapter({
   schema,
+  // migrations,      *use this when changing something in the data base*
   dbName: "VisitorDB",
   jsi: Platform.OS !== "web",
   onSetUpError: (error) => {

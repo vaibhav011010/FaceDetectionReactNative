@@ -1,6 +1,11 @@
 // app/index.tsx
 import React, { useEffect, useContext } from "react";
-import { View, Text, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  InteractionManager,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { LoginContext } from "./context/LoginContext";
 
@@ -10,17 +15,15 @@ export default function SplashScreen() {
 
   useEffect(() => {
     // Add a slight delay to ensure the root layout is mounted
-    const timeout = setTimeout(() => {
+    const navigationTask = InteractionManager.runAfterInteractions(() => {
       if (isLoggedIn) {
-        // If already logged in, go to the main flow (checkin screen)
         router.replace("/checkin-screen");
       } else {
-        // Otherwise, go to the login screen
         router.replace("/login");
       }
-    }, 100); // Adjust the delay if needed
+    });
 
-    return () => clearTimeout(timeout); // Cleanup
+    return () => navigationTask.cancel();
   }, [isLoggedIn]);
 
   return (

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -53,254 +53,304 @@ type Props = {};
 
 const CameraScreen = (props: Props) => {
   const router = useRouter();
-  const visitorNameRedux = useSelector(
-    (state: RootState) => state.visitor.visitorName
-  );
-  const visitorMobileRedux = useSelector(
-    (state: RootState) => state.visitor.visitorMobile
-  );
-  const visitingCompanyRedux = useSelector(
-    (state: RootState) => state.visitor.visitingCompany
-  );
+  const {
+    visitorName: visitorNameRedux,
+    visitorMobile: visitorMobileRedux,
+    visitingCompany: visitingCompanyRedux,
+  } = useSelector((state: RootState) => state.visitor);
   const dispatch = useDispatch<AppDispatch>();
-  const [faces, setFaces] = useState<Face[]>([]);
-  const device = useCameraDevice("front");
+
+  // Camera refs and states
   const cameraRef = useRef<Camera>(null);
-  const [hasPermission, setHasPermission] = useState(false);
+  const device = useCameraDevice("front");
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [cameraKey, setCameraKey] = useState<number>(0);
+
+  // Performance optimized state
+  const [faces, setFaces] = useState<Face[]>([]);
   const [previewDimensions, setPreviewDimensions] = useState({
     width: 0,
     height: 0,
   });
-  const [cameraKey, setCameraKey] = useState<number>(0);
+  const [isReady, setIsReady] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  // New states for countdown and photo capture
+  // Flow states
+  const [showInitialCountdown, setShowInitialCountdown] = useState(true);
+  const [initialCountdown, setInitialCountdown] = useState(3);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-
   const [capturedPhotoUri, setCapturedPhotoUri] = useState<string | null>(null);
   const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
     null
   );
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
 
   // Modal states
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showThankYouModal, setShowThankYouModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  // Debug state to track events
-  const [debugMsg, setDebugMsg] = useState<string>("");
 
-  // Ref to track if a countdown is already in progress
+  // Refs for performance optimization
   const countdownInProgressRef = useRef<boolean>(false);
+  const frameProcessorEnabledRef = useRef<boolean>(true);
+  const faceCaptureTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const faceDetectedRef = useRef<boolean>(false);
+  const lastProcessedTimestamp = useRef<number>(0);
+  const FRAME_PROCESS_INTERVAL = 1000; // Only process frames every 500ms
 
+  // Request camera permissions on mount and start initial countdown
   useEffect(() => {
-    StatusBar.setHidden(true, "none");
+    const requestPermission = async () => {
+      const status = await Camera.requestCameraPermission();
+      setHasPermission(status === "granted");
+    };
 
-    // Clean up when component unmounts
+    requestPermission();
+
+    // Start the initial countdown to prepare the user
+    const initialCountdownInterval = setInterval(() => {
+      setInitialCountdown((prev) => {
+        const newCount = prev - 1;
+
+        // When countdown reaches 0, show camera view
+        if (newCount <= 0) {
+          clearInterval(initialCountdownInterval);
+          setShowInitialCountdown(false);
+          setCameraActive(true);
+          setIsReady(true);
+          return 0;
+        }
+
+        return newCount;
+      });
+
+      // Animate countdown number
+      Animated.sequence([
+        Animated.timing(scaleAnim, {
+          toValue: 1.5,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 1000);
+
+    StatusBar.setHidden(true, "none");
     return () => {
       StatusBar.setHidden(false, "none");
+      clearInterval(initialCountdownInterval);
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
+      }
+      // Clean up any resources
+      frameProcessorEnabledRef.current = false;
     };
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      const status = await Camera.requestCameraPermission();
-      setHasPermission(status === "granted");
-      console.log("Camera permission status:", status);
-    })();
-  }, []);
-
+  // Face detection handler with throttling
   const { detectFaces } = useFaceDetector();
 
   const handleDetectedFaces = Worklets.createRunOnJS((newFaces: Face[]) => {
+    // Skip if already processing or photo captured
+    if (isProcessing || capturedPhotoUri || !frameProcessorEnabledRef.current)
+      return;
+
     setFaces(newFaces || []);
 
-    // If we have faces and no countdown is in progress, start it
+    // If face is detected and no capture is in progress yet
     if (
       newFaces.length > 0 &&
-      !countdownInProgressRef.current &&
-      !capturedPhotoUri
+      !faceDetectedRef.current &&
+      !countdownInProgressRef.current
     ) {
-      console.log("DEBUG: Face detected, starting countdown");
-      setDebugMsg("Face detected - starting countdown");
-      startCountdown();
+      faceDetectedRef.current = true;
+
+      // Wait 2 seconds before capturing photo
+      if (!faceCaptureTimerRef.current) {
+        faceCaptureTimerRef.current = setTimeout(() => {
+          takePhoto();
+          faceCaptureTimerRef.current = null;
+        }, 1000);
+      }
+    } else if (newFaces.length === 0) {
+      // Reset face detection state if face disappears
+      faceDetectedRef.current = false;
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
+        faceCaptureTimerRef.current = null;
+      }
     }
   });
 
+  // Memoize face boxes to prevent unnecessary re-renders
+  const renderFaceBoxes = useMemo(() => {
+    return faces.map((face, index) => (
+      <View
+        key={index}
+        style={[
+          styles.faceBox,
+          {
+            left: face.bounds.x,
+            top: face.bounds.y,
+            width: face.bounds.width,
+            height: face.bounds.height,
+          },
+        ]}
+      />
+    ));
+  }, [faces]);
+
+  // Optimized frame processor with throttling
   const frameProcessor = useFrameProcessor(
     (frame) => {
       "worklet";
-      const detectedFaces = detectFaces(frame) as Face[];
 
-      if (previewDimensions.width === 0 || previewDimensions.height === 0) {
-        handleDetectedFaces(detectedFaces);
-        return;
+      // Early return with simpler condition check
+      if (!frameProcessorEnabledRef.current || !cameraActive) return;
+
+      // Throttle processing more efficiently
+      const now = Date.now();
+      if (now - lastProcessedTimestamp.current < FRAME_PROCESS_INTERVAL) return;
+      lastProcessedTimestamp.current = now;
+
+      try {
+        const detectedFaces = detectFaces(frame);
+
+        // Only process if we have valid dimensions and faces
+        if (
+          detectedFaces?.length &&
+          previewDimensions.width > 0 &&
+          previewDimensions.height > 0
+        ) {
+          // Scale faces more efficiently
+          const scaledFaces = detectedFaces.map((face) => ({
+            bounds: {
+              x: face.bounds.x * previewDimensions.width,
+              y: face.bounds.y * previewDimensions.height,
+              width: face.bounds.width * previewDimensions.width,
+              height: face.bounds.height * previewDimensions.height,
+            },
+            // Only include angles if they're actually used elsewhere
+            pitchAngle: face.pitchAngle,
+            rollAngle: face.rollAngle,
+            yawAngle: face.yawAngle,
+          }));
+
+          handleDetectedFaces(scaledFaces);
+        } else if (detectedFaces?.length === 0) {
+          // Clear faces if none detected
+          handleDetectedFaces([]);
+        }
+      } catch (error) {
+        // Silent catch to prevent crashes
       }
-
-      // Map normalized coordinates to preview layout
-      const scaledFaces = detectedFaces.map((face) => ({
-        bounds: {
-          x: face.bounds.x * previewDimensions.width,
-          y: face.bounds.y * previewDimensions.height,
-          width: face.bounds.width * previewDimensions.width,
-          height: face.bounds.height * previewDimensions.height,
-        },
-        pitchAngle: face.pitchAngle,
-        rollAngle: face.rollAngle,
-        yawAngle: face.yawAngle,
-      }));
-
-      handleDetectedFaces(scaledFaces);
     },
-    [detectFaces, previewDimensions.width, previewDimensions.height]
+    [
+      detectFaces,
+      previewDimensions.width,
+      previewDimensions.height,
+      cameraActive,
+    ]
   );
 
-  // Simple function to start the countdown
-  const startCountdown = () => {
-    // Only start if not already in progress
-    if (countdownInProgressRef.current || capturedPhotoUri) return;
-
-    countdownInProgressRef.current = true;
-    setCountdown(3);
-
-    // Create a countdown sequence that doesn't depend on face detection
-    const startTime = Date.now();
-
-    const runCountdown = () => {
-      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-      const newCount = 3 - elapsedSeconds;
-
-      if (newCount <= 0) {
-        // Take photo when countdown reaches 0
-        setCountdown(0);
-        setDebugMsg("Taking photo");
-        console.log("DEBUG: Countdown complete, taking photo");
-        takePhoto();
-      } else {
-        // Update countdown
-        setCountdown(newCount);
-        setDebugMsg(`Counting: ${newCount}`);
-        console.log(`DEBUG: Countdown at ${newCount}`);
-
-        // Animate countdown number
-        Animated.sequence([
-          Animated.timing(scaleAnim, {
-            toValue: 1.5,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleAnim, {
-            toValue: 1,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-        ]).start();
-
-        // Continue countdown
-        setTimeout(runCountdown, 1000);
-      }
-    };
-
-    // Start the countdown
-    runCountdown();
-  };
-
-  // Function to capture photo
+  // Optimized photo capture
+  // In your takePhoto function, add an extra check:
+  // Improve takePhoto function with better error handling and state management
   const takePhoto = async () => {
-    console.log("DEBUG: takePhoto function called");
-    setIsProcessing(true);
-
-    if (cameraRef.current) {
-      try {
-        console.log("DEBUG: Attempting to take photo");
-        setDebugMsg("Taking photo...");
-
-        const photo = await cameraRef.current.takePhoto({
-          flash: "off",
-        });
-        const base64Photo = await convertPhotoToBase64(photo.path);
-        const fileUri = photo.path.startsWith("file://")
-          ? photo.path
-          : `file://${photo.path}`;
-        setCapturedPhotoUri(fileUri);
-
-        //  console.log("DEBUG: Photo taken successfully", photo.path);
-
-        setDebugMsg("Photo captured");
-
-        // Animate photo capture with a flash effect
-        Animated.sequence([
-          Animated.timing(fadeAnim, {
-            toValue: 0,
-            duration: 100,
-            useNativeDriver: true,
-          }),
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-        ]).start();
-
-        setIsProcessing(false);
-      } catch (error) {
-        console.error("DEBUG: Failed to take photo:", error);
-        setDebugMsg(`Photo error: ${error}`);
-        // Show error to user
-        Alert.alert(
-          "Photo Error",
-          "Failed to capture photo. Please try again.",
-          [{ text: "OK", onPress: resetCamera }]
-        );
-        // Reset countdown status to allow retrying
-        countdownInProgressRef.current = false;
-        setIsProcessing(false);
-      }
-    } else {
-      console.log("DEBUG: Camera ref is null");
-      setDebugMsg("Camera not ready");
-      // Reset countdown status to allow retrying
-      countdownInProgressRef.current = false;
-      setIsProcessing(false);
-    }
-  };
-
-  // Function to reset and take another photo
-  const resetCamera = () => {
-    console.log("DEBUG: Resetting camera");
-    setDebugMsg("Reset camera");
-    setCapturedPhotoUri(null); // Clear the preview image URI
-    setCapturedPhotoBase64(null); // Clear the stored Base64 string
-    setCountdown(null);
-    countdownInProgressRef.current = false;
-    // Force remount of Camera component by changing its key
-    setCameraKey((prev) => prev + 1);
-  };
-
-  // Function to handle the cancel action
-  const handleCancel = () => {
-    setShowCancelModal(true);
-    console.log("DEBUG: Canceling and navigating to check-in screen");
-  };
-
-  // Function to handle the confirm submission
-  const handleConfirmSubmit = async (): Promise<void> => {
-    if (!capturedPhotoUri) {
-      Alert.alert("No Photo", "Please capture a photo before submitting.");
+    // Prevent multiple capture attempts
+    if (isProcessing || capturedPhotoUri) {
+      console.log("Already processing or photo already captured");
       return;
     }
 
-    setShowConfirmModal(false);
+    // Disable further frame processing
+    frameProcessorEnabledRef.current = false;
     setIsProcessing(true);
 
     try {
+      // More robust camera reference check
+      if (!cameraRef.current || !cameraActive) {
+        throw new Error("Camera is not ready");
+      }
+
+      // Give the camera time to stabilize if a face was just detected
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const photo = await cameraRef.current.takePhoto({
+        flash: "off",
+      });
+
+      if (!photo || !photo.path) {
+        throw new Error("Photo path is undefined");
+      }
+
+      const fileUri = photo.path.startsWith("file://")
+        ? photo.path
+        : `file://${photo.path}`;
+
+      setCapturedPhotoUri(fileUri);
+    } catch (error: any) {
+      console.error("Photo capture error:", error);
+      Alert.alert(
+        "Photo Error",
+        `Failed to capture photo: ${error.message || "Unknown error"}`,
+        [{ text: "Try Again", onPress: resetCamera }]
+      );
+      resetCamera();
+    } finally {
+      setIsProcessing(false);
+
+      // Clear any pending face detection timers
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
+        faceCaptureTimerRef.current = null;
+      }
+    }
+  };
+
+  // Reset camera capture state
+  const resetCaptureState = () => {
+    faceDetectedRef.current = false;
+    countdownInProgressRef.current = false;
+    frameProcessorEnabledRef.current = true;
+    setIsProcessing(false);
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+  };
+
+  // Convert photo to base64 only when needed (at submission time)
+  // Modify your convertAndSubmit function with the correct navigation syntax
+  const convertAndSubmit = async () => {
+    // Prevent any pending takePhoto calls
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+    frameProcessorEnabledRef.current = false;
+    setIsProcessing(true);
+
+    try {
+      if (!capturedPhotoUri) {
+        Alert.alert("No Photo", "Please capture a photo before submitting.");
+        setIsProcessing(false);
+        return;
+      }
+
+      setShowConfirmModal(false);
+
       let base64String = capturedPhotoBase64;
       if (!base64String) {
         const result = await convertPhotoToBase64(capturedPhotoUri);
-        base64String = result.image_base64;
-        setCapturedPhotoBase64(base64String);
+        base64String =
+          typeof result === "string" ? result : result.image_base64;
       }
 
       const result = await submitVisitor(
@@ -310,31 +360,28 @@ const CameraScreen = (props: Props) => {
         base64String
       );
 
-      setIsProcessing(false);
+      // Important: Reset states BEFORE navigation
+      resetStates(result.success);
 
       if (result.success) {
-        console.log("Success", "Visitor check-in submitted successfully.");
-
-        // Reset the form fields by dispatching your actions here
-        dispatch(resetForm());
-        dispatch(clearVisitorName());
-        dispatch(clearVisitorMobile());
-        dispatch(clearVisitingCompany());
-
+        // Show thank you modal
         setShowThankYouModal(true);
+
+        // Clear camera-related states
+        setCameraActive(false);
+        setCapturedPhotoUri(null);
+
+        // Navigate after a delay, but ensure we don't process anything else
         setTimeout(() => {
           setShowThankYouModal(false);
+          // For React Navigation, use the correct syntax
           router.replace("/checkin-screen");
         }, 2000);
       } else {
-        console.log(
-          "👾Offline",
-          "No connection. Data stored locally for sync."
-        );
+        // Immediate navigation on failure
         router.replace("/checkin-screen");
       }
     } catch (error) {
-      console.error("Submit error:", error);
       Alert.alert(
         "Submit Failed",
         "Visitor check-in submission failed. Please try again."
@@ -343,7 +390,97 @@ const CameraScreen = (props: Props) => {
     }
   };
 
-  if (!hasPermission) {
+  // Reset camera for retaking photo
+  const resetCamera = () => {
+    setCapturedPhotoUri(null);
+    setCapturedPhotoBase64(null);
+    setCountdown(null);
+    resetCaptureState();
+
+    // Force camera component to re-mount
+    setCameraKey((prev) => prev + 1);
+
+    // Short delay before re-enabling camera
+    setTimeout(() => {
+      setCameraActive(true);
+      frameProcessorEnabledRef.current = true;
+    }, 500);
+  };
+
+  // Reset all states (used after successful submission)
+  const resetStates = (clearRedux = false) => {
+    setIsProcessing(false);
+    setCapturedPhotoUri(null);
+    setCapturedPhotoBase64(null);
+    setCountdown(null);
+    setCameraActive(false); // Ensure camera is turned off
+    frameProcessorEnabledRef.current = false; // Prevent frame processing
+
+    // Clear detection states
+    faceDetectedRef.current = false;
+    countdownInProgressRef.current = false;
+
+    // Clean up timers
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+
+    if (clearRedux) {
+      dispatch(resetForm());
+      dispatch(clearVisitorName());
+      dispatch(clearVisitorMobile());
+      dispatch(clearVisitingCompany());
+    }
+  };
+
+  // Also update your useEffect cleanup to ensure it handles all resources
+  useEffect(() => {
+    // ... existing setup code ...
+
+    return () => {
+      StatusBar.setHidden(false, "none");
+      // Clear all timers
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
+        faceCaptureTimerRef.current = null;
+      }
+
+      // Disable processing
+      frameProcessorEnabledRef.current = false;
+
+      // Reset camera state
+      setCameraActive(false);
+    };
+  }, []);
+
+  // Handle cancel button press
+  const handleCancel = () => {
+    setShowCancelModal(true);
+  };
+
+  // Confirm cancellation and navigate away
+  const confirmCancel = () => {
+    setShowCancelModal(false);
+    resetStates(true);
+    router.replace("/checkin-screen");
+  };
+
+  // Handle confirm submission button press
+  const handleConfirmSubmit = () => {
+    convertAndSubmit();
+  };
+
+  // Loading and error states
+  if (hasPermission === null) {
+    return (
+      <View style={styles.loadingContainer1}>
+        <ActivityIndicator size="large" color="#03045E" />
+      </View>
+    );
+  }
+
+  if (hasPermission === false) {
     return (
       <View style={styles.container}>
         <Text style={styles.instructionText}>
@@ -360,37 +497,29 @@ const CameraScreen = (props: Props) => {
       </View>
     );
   }
-  const confirmCancel = (): void => {
-    // Hide the cancel confirmation modal
-    setShowCancelModal(false);
 
-    // Reset component-level states
-    setCapturedPhotoUri(null);
-    setCountdown(null);
-    countdownInProgressRef.current = false;
-    setDebugMsg("");
+  // Initial countdown screen
+  if (showInitialCountdown) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.countdownContainer}>
+          <Text style={styles.countdownTitle}>Getting Ready</Text>
+          <Text style={styles.countdownInstructions}>
+            Please prepare to position your face
+          </Text>
+          <Animated.Text
+            style={[
+              styles.initialCountdownText,
+              { transform: [{ scale: scaleAnim }] },
+            ]}
+          >
+            {initialCountdown}
+          </Animated.Text>
+        </View>
+      </View>
+    );
+  }
 
-    // Reset Redux form state
-    dispatch(resetForm());
-    dispatch(clearVisitorName());
-    dispatch(clearVisitorMobile());
-    dispatch(clearVisitingCompany());
-    console.log("DEBUG: Canceling and navigating to check-in screen");
-    router.replace("/checkin-screen");
-  };
-  // const [fontsLoaded] = useFonts({
-  //   "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
-  //   "OpenSans_Condensed-Regular": require("../../assets/fonts/OpenSans_Condensed-Regular.ttf"),
-  //   "OpenSans_Condensed-SemiBold": require("../../assets/fonts/OpenSans_Condensed-SemiBold.ttf"),
-  // });
-
-  // if (!fontsLoaded) {
-  //   return (
-  //     <View style={styles.loadingContainer}>
-  //       <ActivityIndicator size="large" color="#03045E" />
-  //     </View>
-  //   );
-  // }
   const windowWidth = Dimensions.get("window").width;
   const windowHeight = Dimensions.get("window").height;
 
@@ -407,7 +536,7 @@ const CameraScreen = (props: Props) => {
           <View style={styles.headerContainer}>
             <TouchableOpacity style={styles.retryButton} onPress={resetCamera}>
               <Ionicons name="refresh-outline" size={22} color="#03045E" />
-              <Text style={styles.retryText}>Retry</Text>
+              <Text style={styles.retryText}>Capture Again</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -417,9 +546,6 @@ const CameraScreen = (props: Props) => {
           onLayout={(event) => {
             const { width, height } = event.nativeEvent.layout;
             setPreviewDimensions({ width, height });
-            console.log(
-              `DEBUG: Camera preview dimensions set: ${width}x${height}`
-            );
           }}
         >
           {!capturedPhotoUri ? (
@@ -430,48 +556,41 @@ const CameraScreen = (props: Props) => {
                 key={cameraKey}
                 ref={cameraRef}
                 style={styles.camera}
+                photoQualityBalance="speed"
+                pixelFormat="yuv"
                 device={device}
-                isActive={!capturedPhotoUri}
-                frameProcessor={!capturedPhotoUri ? frameProcessor : undefined}
+                isActive={cameraActive && !capturedPhotoUri}
+                frameProcessor={
+                  cameraActive &&
+                  !capturedPhotoUri &&
+                  frameProcessorEnabledRef.current
+                    ? frameProcessor
+                    : undefined
+                }
                 photo={true}
               />
 
-              {/* Face boxes */}
-              {faces.map((face, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.faceBox,
-                    {
-                      left: face.bounds.x,
-                      top: face.bounds.y,
-                      width: face.bounds.width,
-                      height: face.bounds.height,
-                    },
-                  ]}
-                />
-              ))}
+              {/* Face boxes - only render when needed */}
+              {!isProcessing &&
+                !capturedPhotoUri &&
+                frameProcessorEnabledRef.current &&
+                renderFaceBoxes}
 
-              {/* No face detected overlay */}
-              {faces.length === 0 ? (
+              {/* Face detection status messages */}
+              {faces.length === 0 && !isProcessing && !capturedPhotoUri ? (
                 <View style={styles.noFaceDetected}>
                   <Text style={styles.noFaceText}>No Face Detected</Text>
                   <Text style={styles.instructionText}>
                     Please position your face in the frame
                   </Text>
                 </View>
-              ) : countdown !== null && countdown > 0 ? (
-                /* Countdown overlay */
+              ) : faces.length > 0 &&
+                faceDetectedRef.current &&
+                !isProcessing &&
+                !capturedPhotoUri ? (
+                /* Face detected - hold steady message */
                 <View style={styles.countdownOverlay}>
                   <Text style={styles.steadyText}>Hold Steady</Text>
-                  <Animated.Text
-                    style={[
-                      styles.countdownText,
-                      { transform: [{ scale: scaleAnim }] },
-                    ]}
-                  >
-                    {countdown}
-                  </Animated.Text>
                 </View>
               ) : null}
             </Animated.View>
@@ -525,7 +644,7 @@ const CameraScreen = (props: Props) => {
           ) : (
             <Text style={styles.instructionText}>
               {faces.length > 0
-                ? countdown !== null
+                ? faceDetectedRef.current
                   ? "Please hold still..."
                   : "Ready to capture!"
                 : "Center your face in the frame"}
@@ -533,7 +652,7 @@ const CameraScreen = (props: Props) => {
           )}
         </View>
 
-        {/* Confirmation Modal */}
+        {/* Modals - unchanged */}
         <Modal
           visible={showConfirmModal}
           transparent={true}
@@ -600,7 +719,6 @@ const CameraScreen = (props: Props) => {
           </View>
         </Modal>
 
-        {/* Thank You Modal */}
         <Modal
           visible={showThankYouModal}
           transparent={true}
@@ -753,6 +871,12 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     marginBottom: 15,
     overflow: "hidden",
+  },
+  loadingContainer1: {
+    ...StyleSheet.absoluteFillObject, // Fills the entire screen
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "white",
   },
   countdownText: {
     color: "white",
@@ -942,6 +1066,35 @@ const styles = StyleSheet.create({
     color: "#03045E",
     textAlign: "center",
     fontFamily: "OpenSans_Condensed-Regular",
+  },
+  countdownContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f5f5f5",
+  },
+  countdownTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#03045E",
+    marginBottom: 10,
+  },
+  countdownInstructions: {
+    fontSize: 18,
+    color: "#333",
+    marginBottom: 30,
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  initialCountdownText: {
+    fontSize: 80,
+    fontWeight: "bold",
+    color: "#03045E",
+  },
+  captureCountdownText: {
+    fontSize: 18,
+    color: "#fff",
+    marginTop: 10,
   },
 });
 

@@ -5,6 +5,7 @@ import { store } from "./store";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { useEffect, useRef } from "react";
 import { syncVisitors } from "./api/visitorForm";
+import { PermissionProvider } from "../src/utility/permissionContext";
 import {
   LogBox,
   InteractionManager,
@@ -72,7 +73,9 @@ export default function Layout() {
   return (
     <Provider store={store}>
       <LoginProvider>
-        <Slot />
+        <PermissionProvider>
+          <Slot />
+        </PermissionProvider>
       </LoginProvider>
     </Provider>
   );

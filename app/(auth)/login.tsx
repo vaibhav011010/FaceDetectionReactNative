@@ -11,6 +11,7 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
   KeyboardAvoidingView,
+  Dimensions,
   StatusBar,
   Alert,
   Button,
@@ -20,6 +21,7 @@ import { useRouter } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
 import { LinearGradient } from "expo-linear-gradient";
 import { useFonts } from "expo-font";
+import NetInfo from "@react-native-community/netinfo";
 
 import { setCorporateParkName } from "../store/slices/globalSlice";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
@@ -47,6 +49,10 @@ interface LoginFormProps {
   onLogin?: (email: string, password: string) => void;
 }
 
+const { width, height } = Dimensions.get("window");
+
+const isTablet = width >= 768; // Common tablet breakpoint
+
 const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
@@ -55,7 +61,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
-  const responsiveFontSize = 16 / fontScale;
+  const mobileFontSize = 14;
+  const tabletFontSize = 17;
+
+  const responsiveFontSize = isTablet
+    ? tabletFontSize / fontScale
+    : mobileFontSize / fontScale;
 
   // Select Redux state
   const isLoading = useAppSelector(selectAuthLoading);
@@ -96,15 +107,11 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const handleLogin = async (): Promise<void> => {
     console.log("handleLogin called");
 
-    // Always trim the email to remove unwanted spaces
     const trimmedEmail = email.trim();
-    // Use the trimmed email in validations and API call
     validateEmail(trimmedEmail);
     validatePassword(password);
 
-    // Only proceed if both inputs are valid
     if (!trimmedEmail || !password) {
-      console.log("Missing email or password. Aborting login.");
       Alert.alert("Error", "Please fill in both email and password.");
       return;
     }
@@ -113,11 +120,10 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       dispatch(loginStart());
       console.log("loginStart dispatched");
 
-      // Call the login API using trimmedEmail
       const response = await login(trimmedEmail, password);
       console.log("API response received:", response);
 
-      // Destructure the response values
+      // ✅ Destructure response values immediately
       const {
         access,
         refresh,
@@ -127,16 +133,47 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         permission,
       } = response;
 
-      console.log("Extracted values:", {
-        access,
-        refresh,
-        user_detail,
-        corporate_park_detail,
-        role_detail,
-        permission,
+      await database.write(async () => {
+        const userCollection = database.get<User>("users");
+        const allUsers = await userCollection.query().fetch();
+        for (const existingUser of allUsers) {
+          await existingUser.update((user) => {
+            user.isLoggedIn = false;
+          });
+        }
+
+        const existing = await userCollection
+          .query(Q.where("user_id", user_detail.id))
+          .fetch();
+
+        if (existing.length > 0) {
+          await existing[0].update((user) => {
+            user.accessToken = access;
+            user.refreshToken = refresh;
+            user.email = user_detail.email;
+            user.corporateParkId = corporate_park_detail.id;
+            user.corporateParkName = corporate_park_detail.corporate_park_name;
+            user.roleId = role_detail.id;
+            user.roleName = role_detail.role_name;
+            user.permissions = JSON.stringify(permission);
+            user.isLoggedIn = true;
+          });
+        } else {
+          await userCollection.create((user) => {
+            user.userId = user_detail.id;
+            user.email = user_detail.email;
+            user.corporateParkId = corporate_park_detail.id;
+            user.corporateParkName = corporate_park_detail.corporate_park_name;
+            user.roleId = role_detail.id;
+            user.roleName = role_detail.role_name;
+            user.permissions = JSON.stringify(permission);
+            user.accessToken = access;
+            user.refreshToken = refresh;
+            user.isLoggedIn = true;
+          });
+        }
       });
 
-      // Build the user object according to our Redux state interface
       const user = {
         id: user_detail.id,
         email: user_detail.email,
@@ -144,7 +181,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         corporateParkName: corporate_park_detail.corporate_park_name,
         roleId: role_detail.id,
         roleName: role_detail.role_name,
-        permissions: permission, // Expected to be an object (Record<string, string[]>)
+        permissions: permission,
       };
 
       console.log("Constructed user object:", user);
@@ -161,6 +198,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       console.log("Corporate park name dispatched to global store");
       console.log("loginSuccess dispatched");
 
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
       // Navigate to the checkin screen after successful login
       router.replace("/checkin-screen");
       console.log("Navigation to checkin-screen complete");
@@ -235,9 +273,18 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   };
 
   const handleForgotPassword = () => {
-    // Will implement later
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) {
+        router.push("/forgot-password");
+        console.log("Navigation to forgot password");
+      } else {
+        Alert.alert(
+          "No Internet",
+          "Please check your internet connection and try again."
+        );
+      }
+    });
   };
-
   const handleSignup = () => {
     // Will implement later
   };
@@ -282,12 +329,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   return (
     <SafeAreaView style={styles.safeAreaContainer}>
-      <KeyboardAvoidingView behavior="height" style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={"padding"} style={{ flex: 1 }}>
         <TouchableWithoutFeedback onPress={handleScreenPress}>
           <View style={styles.container}>
             <View style={styles.imageContainer}>
               <Image
-                source={require("../../assets/ANPRLOGO.png")} // Replace with your image path
+                source={require("../../assets/Logo1.png")} // Replace with your image path
                 style={styles.logo}
               />
             </View>
@@ -295,7 +342,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             <Text style={styles.welcomeText}>Hi, Welcome Back</Text>
             <Text style={styles.infoText}>Login to your account</Text>
 
-            <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} />
+            {/* <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} /> */}
 
             {/* Email Input */}
             <View style={styles.inputContainer}>
@@ -316,8 +363,9 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                 onBlur={() => validateEmail(email)}
                 keyboardType="email-address"
                 onChangeText={(text) => {
-                  setEmail(text);
-                  validateEmail(text);
+                  const lowercasedText = text.toLowerCase(); // Convert input to lowercase
+                  setEmail(lowercasedText);
+                  validateEmail(lowercasedText);
                 }}
                 mode="outlined"
                 outlineStyle={{
@@ -329,10 +377,15 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   styles.textInput,
                   !isEmailValid && { borderColor: "red" },
                 ]}
+                contentStyle={{
+                  paddingTop: 8, // Increased top padding for floating label
+                  paddingBottom: 8,
+                }}
                 theme={{
                   colors: {
                     primary: isEmailValid ? "#03045E" : "red",
                     text: "#03045E",
+                    background: "#EEF2F6",
                   },
                 }}
                 right={
@@ -341,7 +394,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                       icon="close-circle-outline"
                       onPress={handleClearEmail}
                       color="#000"
-                      size={22}
+                      size={20}
                     />
                   ) : null
                 }
@@ -398,6 +451,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   colors: {
                     primary: isPasswordValid ? "#03045E" : "red",
                     text: "#03045E",
+                    background: "#EEF2F6",
                   },
                 }}
                 right={
@@ -405,7 +459,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                     icon={showPassword ? "eye-outline" : "eye-off-outline"}
                     onPress={togglePasswordVisibility}
                     color="#000"
-                    size={22}
+                    size={20}
                   />
                 }
                 selectionColor="#03045E"
@@ -426,12 +480,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             </View>
 
             {/* Forgot Password Link */}
-            {/* <TouchableOpacity
+            <TouchableOpacity
               style={styles.forgotPasswordContainer}
               onPress={handleForgotPassword}
             >
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-            </TouchableOpacity> */}
+            </TouchableOpacity>
 
             {/* Login Button with Gradient */}
             <TouchableOpacity
@@ -476,7 +530,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 const styles = StyleSheet.create({
   safeAreaContainer: {
     flex: 1,
-    backgroundColor: "white",
+    backgroundColor: "#EEF2F6",
   },
   container: {
     flex: 1,
@@ -487,40 +541,42 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     alignItems: "center",
-    marginBottom: 30,
+    marginBottom: 20,
   },
   logo: {
-    width: 100,
-    height: 100,
+    width: isTablet ? 200 : 100,
+    height: isTablet ? 200 : 100,
   },
   inputContainer: {
     width: "85%",
-    height: 50,
+    height: isTablet ? 55 : 50,
+
     marginVertical: 11,
   },
   welcomeText: {
     color: "#03045E",
-    fontSize: 30,
+    fontSize: isTablet ? 32 : 20,
     marginBottom: 5,
-    lineHeight: 30,
+    lineHeight: isTablet ? 38 : 25,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   infoText: {
     color: "#03045E",
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 20,
-    lineHeight: 18 * 1.5,
-    marginBottom: 15,
+    fontSize: isTablet ? 22 : 15,
+    lineHeight: isTablet ? 33 : 22.5,
+    marginBottom: 40,
   },
   textInput: {
-    backgroundColor: "white",
+    backgroundColor: "transparent",
     fontSize: 16,
     fontFamily: "OpenSans-VariableFont_wdth,wght",
   },
   forgotPasswordContainer: {
     alignSelf: "flex-end",
     alignItems: "center",
-    marginTop: 3,
+    marginTop: 5,
+    padding: 2,
     marginRight: "8%",
   },
   forgotPasswordText: {
@@ -532,21 +588,23 @@ const styles = StyleSheet.create({
     width: "85%",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 40,
+    marginTop: 55,
   },
   linearGradient: {
     width: "100%",
-    height: 45,
+    height: isTablet ? 55 : 45,
     justifyContent: "center",
     alignItems: "center",
     borderRadius: 10,
+
     backgroundColor: "#4E4E4E",
 
     padding: 0,
   },
   signInButtonText: {
     color: "#FFFAFA",
-    fontSize: 18,
+    fontSize: isTablet ? 18 : 15,
+
     fontFamily: "OpenSans_Condensed-Bold",
   },
   linkContainer: {

@@ -18,6 +18,9 @@ import { useFonts } from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import { RootState } from "../store";
 const windowWidth = Dimensions.get("window").width;
+const { width, height } = Dimensions.get("window");
+
+export const isTablet = width >= 768;
 
 export default function CheckinScreen() {
   const router = useRouter();
@@ -101,7 +104,7 @@ export default function CheckinScreen() {
             </View> */}
                 <View style={styles.imageContainer}>
                   <Image
-                    source={require("../../assets/ANPRLOGO.png")} // Replace with your image path
+                    source={require("../../assets/Logo1.png")} // Replace with your image path
                     style={styles.logo}
                   />
                 </View>
@@ -112,8 +115,11 @@ export default function CheckinScreen() {
                   activeOpacity={0.8}
                   onPress={handleNewVisit}
                 >
-                  <Ionicons name="person-add" size={26} color="white" />
-                  <Text style={styles.buttonText}>CHECK IN</Text>
+                  <Image
+                    source={require("../../assets/addUser.png")} // Update with your image path
+                    style={styles.buttonImage}
+                  />
+                  <Text style={styles.buttonText}>Check In</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -169,10 +175,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   borderContainer: {
-    borderWidth: 14,
-    borderColor: "#03045E", // Sky blue color
-    borderRadius: 10,
-    overflow: "hidden",
+    // borderWidth: 14,
+    // borderColor: "#03045E", // Sky blue color
+    // borderRadius: 2,
+    // overflow: "hidden",
   },
   contentContainer: {
     flex: 1,
@@ -188,19 +194,18 @@ const styles = StyleSheet.create({
   },
   welcomeText: {
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 26,
+    fontSize: isTablet ? 35 : 25,
     color: "#03045E",
     textAlign: "center",
-    marginBottom: 60,
+    marginBottom: 20,
   },
   logoContainer: {
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 35,
   },
   logoCircle: {
-    width: 120,
-    height: 120,
+    width: isTablet ? 200 : 120,
+    height: isTablet ? 200 : 120,
     borderRadius: 60,
     borderWidth: 3,
     borderColor: "#C0C0C0", // Silver border
@@ -214,28 +219,35 @@ const styles = StyleSheet.create({
     color: "#FFD700", // Gold/yellow color
   },
   newVisitButton: {
+    height: 65,
+    width: 248,
     flexDirection: "row",
     backgroundColor: "#03045E",
-    paddingVertical: 18,
-    paddingHorizontal: 39,
+
     borderRadius: 5,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#C0C0C0", // Silver border
+    marginTop: 89,
   },
   buttonText: {
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: 22,
-    color: "white", // Gold/yellow color
-    marginLeft: 10,
+    fontSize: isTablet ? 20 : 18,
+    color: "#FAFAFA",
+    marginHorizontal: 10,
   },
   imageContainer: {
     alignItems: "center",
     marginBottom: 60,
   },
   logo: {
-    width: 120,
-    height: 120,
+    width: 160,
+    height: 160,
+  },
+  buttonImage: {
+    width: isTablet ? 28 : 22,
+    height: isTablet ? 28 : 22,
+    resizeMode: "contain",
   },
 });

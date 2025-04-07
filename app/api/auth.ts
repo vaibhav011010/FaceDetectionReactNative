@@ -3,6 +3,7 @@ import axiosInstance from "./axiosInstance";
 import database from "../database";
 import User from "../database/models/User";
 import { Q } from "@nozbe/watermelondb";
+import axiosBase from "./axiosBase";
 
 export const login = async (email: string, password: string) => {
   const response = await axiosInstance.post(`/accounts/login/`, {
@@ -64,19 +65,27 @@ export const login = async (email: string, password: string) => {
 
 // Fetch stored access token
 export const getAccessToken = async () => {
-  const users = await database.get<User>("users").query().fetch();
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("is_logged_in", true))
+    .fetch();
+
   if (users.length === 0) return null;
   return users[0].accessToken;
 };
 
 // Refresh access token when expired
 export const refreshAccessToken = async () => {
-  const users = await database.get<User>("users").query().fetch();
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("is_logged_in", true))
+    .fetch();
+
   if (users.length === 0) return null;
 
   const refreshToken = users[0].refreshToken;
   try {
-    const response = await axiosInstance.post(`/refresh/`, {
+    const response = await axiosBase.post(`/api/token/refresh/`, {
       refresh: refreshToken,
     });
     const newAccessToken = response.data.access;

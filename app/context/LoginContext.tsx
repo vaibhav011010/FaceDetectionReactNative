@@ -1,4 +1,10 @@
-import React, { createContext, useState, ReactNode, useMemo } from "react";
+import React, {
+  createContext,
+  useState,
+  ReactNode,
+  useMemo,
+  useEffect,
+} from "react";
 import { Alert } from "react-native";
 import { useAppDispatch } from "../store/hooks";
 import { loginSuccess, logout } from "../store/slices/authSlice";
@@ -26,27 +32,71 @@ export const LoginContext = createContext<LoginContextType>({
 interface LoginProviderProps {
   children: ReactNode;
 }
-
 export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
   const dispatch = useAppDispatch();
-  // Force manual login on every app start.
   const [isLoggedIn, setLocalIsLoggedIn] = useState<boolean>(false);
 
-  const setIsLoggedIn = async (value: boolean, userData?: any) => {
-    if (value && userData) {
-      const userCollection = database.get<User>("users");
-      const apiUserId = Number(userData.user_detail.id);
-      console.log("API user id:", apiUserId);
+  // Auto-login on app start
+  // useEffect(() => {
+  //   const bootstrap = async () => {
+  //     try {
+  //       const userCollection = database.get<User>("users");
+  //       const loggedInUsers = await userCollection
+  //         .query(Q.where("is_logged_in", true))
+  //         .fetch();
 
-      // Query for an existing record using the API's user id.
+  //       if (loggedInUsers.length > 0) {
+  //         const user = loggedInUsers[0];
+  //         console.log("Auto-login with user:", user.email);
+
+  //         dispatch(
+  //           loginSuccess({
+  //             user: {
+  //               id: Number(user.userId),
+  //               email: user.email,
+  //               corporateParkId: user.corporateParkId,
+  //               corporateParkName: user.corporateParkName,
+  //               roleId: user.roleId,
+  //               roleName: user.roleName,
+  //               permissions: user.permissions
+  //                 ? JSON.parse(user.permissions)
+  //                 : {},
+  //             },
+  //             accessToken: user.accessToken,
+  //             refreshToken: user.refreshToken,
+  //           })
+  //         );
+  //         setLocalIsLoggedIn(true);
+  //       }
+  //     } catch (err) {
+  //       console.error("Auto-login failed:", err);
+  //     }
+  //   };
+
+  //   bootstrap();
+  // }, []);
+
+  const setIsLoggedIn = async (value: boolean, userData?: any) => {
+    const userCollection = database.get<User>("users");
+
+    if (value && userData) {
+      const apiUserId = Number(userData.user_detail.id);
       const existingUsers = await userCollection
         .query(Q.where("user_id", apiUserId))
         .fetch();
-      console.log("Existing users count:", existingUsers.length);
+
+      // Set all users to logged out first
+      await database.write(async () => {
+        const allUsers = await userCollection.query().fetch();
+        for (const u of allUsers) {
+          await u.update((user) => {
+            user.isLoggedIn = false;
+          });
+        }
+      });
 
       if (existingUsers.length > 0) {
         const storedUser = existingUsers[0];
-        // Compare stored email with the API email.
         if (storedUser.email !== userData.user_detail.email) {
           Alert.alert(
             "Login Failed",
@@ -59,6 +109,7 @@ export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
             await storedUser.update((user) => {
               user.accessToken = userData.access;
               user.refreshToken = userData.refresh;
+              user.isLoggedIn = true; // ✅
             });
           });
         }
@@ -66,7 +117,6 @@ export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
         console.log("No matching user found. Creating a new record.");
         await database.write(async () => {
           await userCollection.create((user) => {
-            // Save the API user id in the dedicated column.
             user.userId = apiUserId;
             user.email = userData.user_detail.email;
             user.corporateParkId = userData.user_detail.corporate_park_id;
@@ -77,10 +127,11 @@ export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
             user.permissions = JSON.stringify(userData.permission);
             user.accessToken = userData.access;
             user.refreshToken = userData.refresh;
+            user.isLoggedIn = true; // ✅
           });
         });
       }
-      // Dispatch loginSuccess to update Redux state for this session.
+
       dispatch(
         loginSuccess({
           user: {
@@ -98,16 +149,18 @@ export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
         })
       );
     } else {
-      // Logging out: clear all stored user records.
-      const userCollection = database.get<User>("users");
+      // Logging out: set all users as not logged in (don't delete)
       const storedUsers = await userCollection.query().fetch();
       await database.write(async () => {
         for (const user of storedUsers) {
-          await user.destroyPermanently();
+          await user.update((u) => {
+            u.isLoggedIn = false; // ✅
+          });
         }
       });
       dispatch(logout());
     }
+
     setLocalIsLoggedIn(value);
   };
 
@@ -115,6 +168,7 @@ export const LoginProvider: React.FC<LoginProviderProps> = ({ children }) => {
     () => ({ isLoggedIn, setIsLoggedIn }),
     [isLoggedIn]
   );
+
   return (
     <LoginContext.Provider value={contextValue}>
       {children}

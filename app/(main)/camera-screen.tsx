@@ -1,4 +1,10 @@
-import React, { useRef, useEffect, useState, useMemo } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from "react";
 import {
   StyleSheet,
   View,
@@ -18,9 +24,11 @@ import {
   useFrameProcessor,
   PhotoFile,
 } from "react-native-vision-camera";
+
 import { useFaceDetector } from "react-native-vision-camera-face-detector";
+import { useFocusEffect } from "@react-navigation/native";
 import { Worklets } from "react-native-worklets-core";
-import { useRouter } from "expo-router";
+import { useRouter, usePathname, useSegments } from "expo-router";
 import { useFonts } from "expo-font";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { convertPhotoToBase64 } from "@/src/utility/photoConvertor";
@@ -35,6 +43,8 @@ import {
   clearVisitingCompany,
 } from "../store/slices/visitorSlice";
 import { submitVisitor } from "../api/visitorForm";
+import debounce from "lodash.debounce";
+
 import { AppDispatch, RootState } from "../store";
 
 interface Face {
@@ -50,30 +60,41 @@ interface Face {
 }
 
 type Props = {};
-
+const { width, height } = Dimensions.get("window");
+const isTablet = width >= 768;
 const CameraScreen = (props: Props) => {
   const router = useRouter();
+  const pathname = usePathname();
+  const segments = useSegments();
   const {
     visitorName: visitorNameRedux,
     visitorMobile: visitorMobileRedux,
     visitingCompany: visitingCompanyRedux,
   } = useSelector((state: RootState) => state.visitor);
   const dispatch = useDispatch<AppDispatch>();
-
+  const currentSlide = useRef(new Animated.Value(0)).current;
   // Camera refs and states
   const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice("front");
+
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [cameraKey, setCameraKey] = useState<number>(0);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Performance optimized state
+  const [batteryMode, setBatteryMode] = useState("balanced");
+
   const [faces, setFaces] = useState<Face[]>([]);
   const [previewDimensions, setPreviewDimensions] = useState({
     width: 0,
     height: 0,
   });
   const [isReady, setIsReady] = useState(false);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [frameProcessorEnabled, setFrameProcessorEnabled] = useState(true);
+
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
@@ -85,12 +106,19 @@ const CameraScreen = (props: Props) => {
   const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
     null
   );
+  const isCameraMounted = useRef(true);
   const [cameraActive, setCameraActive] = useState(false);
+
+  const [uiFaceDetected, setUIFaceDetected] = useState(false);
 
   // Modal states
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showThankYouModal, setShowThankYouModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const isTakingPhoto = useRef(false);
+  const isProcessingRef = useRef(false);
+  const isTakingPhotoRef = useRef(false);
 
   // Refs for performance optimization
   const countdownInProgressRef = useRef<boolean>(false);
@@ -98,88 +126,235 @@ const CameraScreen = (props: Props) => {
   const faceCaptureTimerRef = useRef<NodeJS.Timeout | null>(null);
   const faceDetectedRef = useRef<boolean>(false);
   const lastProcessedTimestamp = useRef<number>(0);
-  const FRAME_PROCESS_INTERVAL = 1000; // Only process frames every 500ms
+  const FRAME_PROCESS_INTERVAL = 1000;
 
-  // Request camera permissions on mount and start initial countdown
+  const [cameraInitializing, setCameraInitializing] = useState(true);
+  // Replace all setFrameProcessorEnabled calls with:
+  // Replace ALL setFrameProcessorEnabled calls with:
+  const toggleFrameProcessor = (enable: boolean) => {
+    // Only toggle if state actually changes
+    if (frameProcessorEnabled !== enable && cameraActive) {
+      console.log(`Frame processor ${enable ? "ENABLED" : "DISABLED"}`);
+      setFrameProcessorEnabled(enable);
+      frameProcessorEnabledRef.current = enable;
+    }
+  };
+
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     console.log("Camera ref check:", !!cameraRef.current);
+  //   }, 10000);
+
+  //   return () => clearInterval(interval);
+  // }, []);
+
   useEffect(() => {
-    const requestPermission = async () => {
-      const status = await Camera.requestCameraPermission();
-      setHasPermission(status === "granted");
-    };
+    // Ensure we have a valid camera device
+    if (!device) {
+      console.error("No camera device available");
+      Alert.alert(
+        "Camera Error",
+        "No front camera found on this device. Please check your device settings."
+      );
+    }
+  }, [device]);
+  useEffect(() => {
+    console.log("Camera component mounted with ref:", !!cameraRef.current);
 
-    requestPermission();
-
-    // Start the initial countdown to prepare the user
-    const initialCountdownInterval = setInterval(() => {
-      setInitialCountdown((prev) => {
-        const newCount = prev - 1;
-
-        // When countdown reaches 0, show camera view
-        if (newCount <= 0) {
-          clearInterval(initialCountdownInterval);
-          setShowInitialCountdown(false);
-          setCameraActive(true);
-          setIsReady(true);
-          return 0;
-        }
-
-        return newCount;
-      });
-
-      // Animate countdown number
-      Animated.sequence([
-        Animated.timing(scaleAnim, {
-          toValue: 1.5,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }, 1000);
-
-    StatusBar.setHidden(true, "none");
     return () => {
-      StatusBar.setHidden(false, "none");
-      clearInterval(initialCountdownInterval);
-      if (faceCaptureTimerRef.current) {
-        clearTimeout(faceCaptureTimerRef.current);
-      }
-      // Clean up any resources
-      frameProcessorEnabledRef.current = false;
+      console.log("Camera component unmounting, ref:", !!cameraRef.current);
     };
   }, []);
 
+  // Request camera permissions on mount and start initial countdown
+  // Replace your camera initialization code with this more reliable approach
+  useEffect(() => {
+    // Clear any previous timers to prevent memory leaks
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+    const requestPermission = async () => {
+      try {
+        // Check current permission status first
+        const status = await Camera.getCameraPermissionStatus();
+
+        // If not granted, explicitly request
+        if (status !== "granted") {
+          const newStatus = await Camera.requestCameraPermission();
+          setHasPermission(newStatus === "granted");
+
+          // Only proceed if permission is granted
+          if (newStatus === "granted") {
+            // Start the initial countdown after permission is confirmed
+            startInitialCountdown();
+          }
+        } else {
+          setHasPermission(true);
+          // Start countdown if already have permission
+          startInitialCountdown();
+        }
+      } catch (error) {
+        console.error("Permission error:", error);
+        Alert.alert(
+          "Camera Permission Error",
+          "Unable to access camera. Please check your device settings."
+        );
+      }
+    };
+
+    const startInitialCountdown = () => {
+      // Start the initial countdown to prepare the user
+      const initialCountdownInterval = setInterval(() => {
+        setInitialCountdown((prev) => {
+          const newCount = prev - 1;
+
+          // When countdown reaches 0, show camera view but not yet activated
+          if (newCount <= 0) {
+            clearInterval(initialCountdownInterval);
+            setShowInitialCountdown(false);
+            setCameraActive(true);
+            return 0;
+          }
+
+          return newCount;
+        });
+
+        // Animate countdown number
+        Animated.sequence([
+          Animated.timing(scaleAnim, {
+            toValue: 1.5,
+            duration: 100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }, 1000);
+
+      // Store interval reference for cleanup
+      return () => {
+        clearInterval(initialCountdownInterval);
+      };
+    };
+
+    requestPermission();
+    StatusBar.setHidden(true, "none");
+
+    return () => {
+      StatusBar.setHidden(false, "none");
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
+        faceCaptureTimerRef.current = null;
+      }
+      // Properly clean up camera resources
+      // setFrameProcessorEnabled(false);
+      toggleFrameProcessor(false);
+      setCameraActive(false);
+    };
+  }, []);
+  useEffect(() => {
+    // When this specific screen is loaded
+    console.log("Screen loaded, resetting camera...");
+    resetCamera();
+
+    return () => {
+      // When navigating away
+      console.log("Navigating away, deactivating camera...");
+      setCameraActive(false);
+      frameProcessorEnabledRef.current = false;
+    };
+  }, [pathname, segments]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const initCamera = async () => {
+      try {
+        setCameraInitializing(true);
+
+        // Wait for device to be ready
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        if (mounted) {
+          setCameraActive(true);
+          frameProcessorEnabledRef.current = true;
+        }
+      } finally {
+        if (mounted) {
+          setCameraInitializing(false);
+        }
+      }
+    };
+
+    initCamera();
+
+    return () => {
+      mounted = false;
+      resetCaptureState();
+      setCameraActive(false);
+    };
+  }, [cameraKey]); // Re-run when cameraKey changes
   // Face detection handler with throttling
-  const { detectFaces } = useFaceDetector();
+  const { detectFaces } = useFaceDetector({
+    performanceMode: "fast", // Use fast mode instead of "accurate"
+    minFaceSize: 0.1, // Lower this to detect smaller faces
+    landmarkMode: "none", // Disable landmarks to avoid false negatives
+    contourMode: "none", // Disable contour detection to improve performance
+  });
+
+  const cameraSettings = useMemo(() => {
+    switch (batteryMode) {
+      case "low_power":
+        return {
+          photoQualityBalance: "speed",
+          pixelFormat: "yuv",
+          frameProcessorEnabled: false,
+        };
+      default:
+        return {
+          photoQualityBalance: "balanced",
+          pixelFormat: "native",
+          frameProcessorEnabled: true,
+        };
+    }
+  }, [batteryMode]);
 
   const handleDetectedFaces = Worklets.createRunOnJS((newFaces: Face[]) => {
-    // Skip if already processing or photo captured
-    if (isProcessing || capturedPhotoUri || !frameProcessorEnabledRef.current)
-      return;
-
-    setFaces(newFaces || []);
-
-    // If face is detected and no capture is in progress yet
+    // Skip if in invalid state
     if (
-      newFaces.length > 0 &&
-      !faceDetectedRef.current &&
-      !countdownInProgressRef.current
+      isProcessingRef.current ||
+      capturedPhotoUri ||
+      !frameProcessorEnabledRef.current
     ) {
+      return;
+    }
+    setUIFaceDetected(newFaces.length > 0);
+    // Update faces only if changed
+    if (JSON.stringify(faces) !== JSON.stringify(newFaces)) {
+      setFaces(newFaces || []);
+    }
+
+    // Face detection logic
+    if (newFaces.length > 0 && !faceDetectedRef.current) {
       faceDetectedRef.current = true;
 
-      // Wait 2 seconds before capturing photo
-      if (!faceCaptureTimerRef.current) {
-        faceCaptureTimerRef.current = setTimeout(() => {
-          takePhoto();
-          faceCaptureTimerRef.current = null;
-        }, 1000);
+      // Clear any existing timer
+      if (faceCaptureTimerRef.current) {
+        clearTimeout(faceCaptureTimerRef.current);
       }
+
+      // Start new capture delay
+      faceCaptureTimerRef.current = setTimeout(() => {
+        if (!isProcessingRef.current && !capturedPhotoUri) {
+          takePhoto();
+        }
+        faceCaptureTimerRef.current = null;
+      }, 500); // 0.5second delay
     } else if (newFaces.length === 0) {
-      // Reset face detection state if face disappears
       faceDetectedRef.current = false;
       if (faceCaptureTimerRef.current) {
         clearTimeout(faceCaptureTimerRef.current);
@@ -206,6 +381,7 @@ const CameraScreen = (props: Props) => {
     ));
   }, [faces]);
 
+  // Optimized frame processor with throttling
   // Optimized frame processor with throttling
   const frameProcessor = useFrameProcessor(
     (frame) => {
@@ -263,31 +439,31 @@ const CameraScreen = (props: Props) => {
   // In your takePhoto function, add an extra check:
   // Improve takePhoto function with better error handling and state management
   const takePhoto = async () => {
-    // Prevent multiple capture attempts
-    if (isProcessing || capturedPhotoUri) {
-      console.log("Already processing or photo already captured");
+    if (isProcessingRef.current || capturedPhotoUri || !cameraActive) {
+      console.log("Capture blocked - invalid state");
       return;
     }
 
-    // Disable further frame processing
+    // Lock capture process
+    isProcessingRef.current = true;
     frameProcessorEnabledRef.current = false;
     setIsProcessing(true);
 
     try {
-      // More robust camera reference check
-      if (!cameraRef.current || !cameraActive) {
-        throw new Error("Camera is not ready");
+      // Triple-check camera state
+      if (!cameraRef.current) {
+        throw new Error("Camera ref is null");
       }
 
-      // Give the camera time to stabilize if a face was just detected
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Stabilization delay
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       const photo = await cameraRef.current.takePhoto({
         flash: "off",
       });
 
-      if (!photo || !photo.path) {
-        throw new Error("Photo path is undefined");
+      if (!photo?.path) {
+        throw new Error("Invalid photo result");
       }
 
       const fileUri = photo.path.startsWith("file://")
@@ -295,40 +471,19 @@ const CameraScreen = (props: Props) => {
         : `file://${photo.path}`;
 
       setCapturedPhotoUri(fileUri);
-    } catch (error: any) {
-      console.error("Photo capture error:", error);
-      Alert.alert(
-        "Photo Error",
-        `Failed to capture photo: ${error.message || "Unknown error"}`,
-        [{ text: "Try Again", onPress: resetCamera }]
-      );
-      resetCamera();
+    } catch (error) {
+      console.error("Capture failed:", error);
+      resetCamera(); // Full reset on error
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
-
-      // Clear any pending face detection timers
-      if (faceCaptureTimerRef.current) {
-        clearTimeout(faceCaptureTimerRef.current);
-        faceCaptureTimerRef.current = null;
-      }
     }
   };
-
   // Reset camera capture state
-  const resetCaptureState = () => {
-    faceDetectedRef.current = false;
-    countdownInProgressRef.current = false;
-    frameProcessorEnabledRef.current = true;
-    setIsProcessing(false);
-    if (faceCaptureTimerRef.current) {
-      clearTimeout(faceCaptureTimerRef.current);
-      faceCaptureTimerRef.current = null;
-    }
-  };
 
-  // Convert photo to base64 only when needed (at submission time)
   // Modify your convertAndSubmit function with the correct navigation syntax
   const convertAndSubmit = async () => {
+    setIsLoading(true);
     // Prevent any pending takePhoto calls
     if (faceCaptureTimerRef.current) {
       clearTimeout(faceCaptureTimerRef.current);
@@ -387,26 +542,55 @@ const CameraScreen = (props: Props) => {
         "Visitor check-in submission failed. Please try again."
       );
       setIsProcessing(false);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Reset camera for retaking photo
-  const resetCamera = () => {
+  const resetCaptureState = () => {
+    // Reset all refs
+    faceDetectedRef.current = false;
+    countdownInProgressRef.current = false;
+    isProcessingRef.current = false;
+
+    // Clear any pending timers
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+
+    // Reset frame processing (but don't enable yet)
+    frameProcessorEnabledRef.current = false;
+  };
+
+  const resetCamera = async () => {
+    console.log("Resetting camera...");
+    setIsResetting(true);
+
+    // 1. First disable everything
+    setCameraActive(false);
+    resetCaptureState();
+
+    // 2. Clear states
     setCapturedPhotoUri(null);
     setCapturedPhotoBase64(null);
     setCountdown(null);
-    resetCaptureState();
+    setFaces([]);
 
-    // Force camera component to re-mount
+    // 3. Wait for cleanup to complete
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // 4. Remount camera with new key
     setCameraKey((prev) => prev + 1);
 
-    // Short delay before re-enabling camera
+    // 5. Re-enable after delay
     setTimeout(() => {
+      console.log("Re-enabling camera...");
       setCameraActive(true);
+      setIsResetting(false);
       frameProcessorEnabledRef.current = true;
-    }, 500);
+    }, 800);
   };
-
   // Reset all states (used after successful submission)
   const resetStates = (clearRedux = false) => {
     setIsProcessing(false);
@@ -433,26 +617,6 @@ const CameraScreen = (props: Props) => {
       dispatch(clearVisitingCompany());
     }
   };
-
-  // Also update your useEffect cleanup to ensure it handles all resources
-  useEffect(() => {
-    // ... existing setup code ...
-
-    return () => {
-      StatusBar.setHidden(false, "none");
-      // Clear all timers
-      if (faceCaptureTimerRef.current) {
-        clearTimeout(faceCaptureTimerRef.current);
-        faceCaptureTimerRef.current = null;
-      }
-
-      // Disable processing
-      frameProcessorEnabledRef.current = false;
-
-      // Reset camera state
-      setCameraActive(false);
-    };
-  }, []);
 
   // Handle cancel button press
   const handleCancel = () => {
@@ -498,250 +662,383 @@ const CameraScreen = (props: Props) => {
     );
   }
 
-  // Initial countdown screen
-  if (showInitialCountdown) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.countdownContainer}>
-          <Text style={styles.countdownTitle}>Getting Ready</Text>
-          <Text style={styles.countdownInstructions}>
-            Please prepare to position your face
-          </Text>
-          <Animated.Text
-            style={[
-              styles.initialCountdownText,
-              { transform: [{ scale: scaleAnim }] },
-            ]}
-          >
-            {initialCountdown}
-          </Animated.Text>
-        </View>
-      </View>
-    );
-  }
-
   const windowWidth = Dimensions.get("window").width;
   const windowHeight = Dimensions.get("window").height;
 
+  // Initial countdown screen
+  // if (showInitialCountdown) {
+  //   return (
+  //     <View
+  //       style={[
+  //         styles.borderContainer2,
+  //         { width: windowWidth, height: windowHeight },
+  //       ]}
+  //     >
+  //       {/* <View style={styles.countdownContainer}> */}
+  //       <Text style={styles.countdownTitle}>Getting Ready</Text>
+  //       <Text style={styles.countdownInstructions}>
+  //         Please prepare to position your face
+  //       </Text>
+  //       <Animated.Text
+  //         style={[
+  //           styles.initialCountdownText,
+  //           { transform: [{ scale: scaleAnim }] },
+  //         ]}
+  //       >
+  //         {initialCountdown}
+  //       </Animated.Text>
+  //     </View>
+  //     // </View>
+  //   );
+  // }
+  const getResponsiveSize = (baseSize: number) => {
+    const scaleFactor = width / 375; // Standard iPhone width as base
+    return baseSize * scaleFactor;
+  };
+  const handleCameraInitialized = () => {
+    setCameraInitializing(false);
+    setIsReady(true);
+    console.log("Camera initialized successfully");
+    // Enable frame processor only after camera is fully initialized
+    setTimeout(() => {
+      if (cameraActive) {
+        // setFrameProcessorEnabled(true);
+        toggleFrameProcessor(true);
+      }
+    }, 500);
+  };
   return (
     <View style={styles.container}>
-      <View
-        style={[
-          styles.borderContainer,
-          { width: windowWidth, height: windowHeight + 52 },
-        ]}
+      <Animated.View
+        style={[styles.screen, { transform: [{ translateX: currentSlide }] }]}
       >
-        {/* Header with retry button when photo is captured */}
-        {capturedPhotoUri && (
-          <View style={styles.headerContainer}>
-            <TouchableOpacity style={styles.retryButton} onPress={resetCamera}>
-              <Ionicons name="refresh-outline" size={22} color="#03045E" />
-              <Text style={styles.retryText}>Capture Again</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <View
-          style={styles.cameraWrapper}
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            setPreviewDimensions({ width, height });
-          }}
-        >
-          {!capturedPhotoUri ? (
-            <Animated.View
-              style={{ opacity: fadeAnim, width: "100%", height: "100%" }}
-            >
-              <Camera
-                key={cameraKey}
-                ref={cameraRef}
-                style={styles.camera}
-                photoQualityBalance="speed"
-                pixelFormat="yuv"
-                device={device}
-                isActive={cameraActive && !capturedPhotoUri}
-                frameProcessor={
-                  cameraActive &&
-                  !capturedPhotoUri &&
-                  frameProcessorEnabledRef.current
-                    ? frameProcessor
-                    : undefined
-                }
-                photo={true}
-              />
-
-              {/* Face boxes - only render when needed */}
-              {!isProcessing &&
-                !capturedPhotoUri &&
-                frameProcessorEnabledRef.current &&
-                renderFaceBoxes}
-
-              {/* Face detection status messages */}
-              {faces.length === 0 && !isProcessing && !capturedPhotoUri ? (
-                <View style={styles.noFaceDetected}>
-                  <Text style={styles.noFaceText}>No Face Detected</Text>
-                  <Text style={styles.instructionText}>
-                    Please position your face in the frame
-                  </Text>
-                </View>
-              ) : faces.length > 0 &&
-                faceDetectedRef.current &&
-                !isProcessing &&
-                !capturedPhotoUri ? (
-                /* Face detected - hold steady message */
+        <View style={styles.container2}>
+          <View
+            style={[styles.borderContainer, { width: width, height: height }]}
+          >
+            <View style={styles.container3}>
+              {showInitialCountdown ? (
                 <View style={styles.countdownOverlay}>
-                  <Text style={styles.steadyText}>Hold Steady</Text>
+                  <Text style={styles.countdownTitle}>Getting Ready</Text>
+                  <Text style={styles.countdownInstructions}>
+                    Please prepare to position your face
+                  </Text>
+                  <Animated.Text
+                    style={[
+                      styles.initialCountdownText,
+                      { transform: [{ scale: scaleAnim }] },
+                    ]}
+                  >
+                    {initialCountdown}
+                  </Animated.Text>
                 </View>
-              ) : null}
-            </Animated.View>
-          ) : (
-            /* Captured photo display */
-            <View style={styles.capturedPhotoContainer}>
-              <Image
-                source={{ uri: capturedPhotoUri }}
-                style={styles.capturedImage}
-              />
+              ) : (
+                <>
+                  <View
+                    style={styles.cameraWrapper}
+                    onLayout={(event) => {
+                      const { width, height } = event.nativeEvent.layout;
+                      setPreviewDimensions({ width, height });
+                    }}
+                  >
+                    {cameraActive && cameraInitializing && (
+                      <View style={styles.cameraInitializingOverlay}>
+                        <Text style={styles.initializingText}>
+                          Initializing camera...
+                        </Text>
+                      </View>
+                    )}
 
-              <View style={styles.captureSuccessOverlay}>
-                <Text style={styles.captureSuccessText}>Photo Captured!</Text>
-              </View>
-            </View>
-          )}
-        </View>
+                    {!capturedPhotoUri ? (
+                      <Animated.View
+                        style={{
+                          opacity: fadeAnim,
+                          width: "100%",
+                          height: "100%",
+                          position: "relative", // Add this
+                        }}
+                      >
+                        {cameraActive && (
+                          <Camera
+                            key={cameraKey}
+                            ref={cameraRef}
+                            onInitialized={handleCameraInitialized}
+                            onError={(error) => {
+                              console.error("Camera error:", error);
+                              resetCamera();
+                            }}
+                            videoStabilizationMode="auto"
+                            style={styles.camera}
+                            device={device}
+                            photoQualityBalance="balanced"
+                            pixelFormat="yuv"
+                            enableZoomGesture={false}
+                            isActive={cameraActive}
+                            frameProcessor={
+                              frameProcessorEnabled ? frameProcessor : undefined
+                            }
+                            photo={true}
+                          />
+                        )}
 
-        {/* Bottom section with submit/cancel buttons */}
-        <View style={styles.bottomSection}>
-          {capturedPhotoUri ? (
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleCancel}
-                disabled={isProcessing}
+                        {/* Modify face detection overlays */}
+                        {faces.length === 0 &&
+                        !isProcessing &&
+                        !capturedPhotoUri ? (
+                          <View
+                            style={[
+                              styles.noFaceDetected,
+                              {
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: "transparent", // Ensure overlay is transparent
+                              },
+                            ]}
+                          >
+                            <Text style={styles.noFaceText}>
+                              No Face Detected
+                            </Text>
+                            <Text style={styles.instructionText}>
+                              Please position your face in the frame
+                            </Text>
+                          </View>
+                        ) : faces.length > 0 &&
+                          uiFaceDetected &&
+                          !isProcessing &&
+                          !capturedPhotoUri ? (
+                          <View
+                            style={[
+                              styles.countdownOverlay,
+                              {
+                                position: "absolute",
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: "rgba(0,0,0,0.3)", // Semi-transparent overlay
+                              },
+                            ]}
+                          >
+                            <Text style={styles.steadyText}>Hold Steady</Text>
+                          </View>
+                        ) : null}
+
+                        {/* Existing face boxes */}
+                        {!isProcessing &&
+                          !capturedPhotoUri &&
+                          frameProcessorEnabled &&
+                          renderFaceBoxes}
+                      </Animated.View>
+                    ) : (
+                      /* Captured photo display */
+                      <View style={styles.capturedPhotoContainer}>
+                        <Image
+                          source={{ uri: capturedPhotoUri }}
+                          style={styles.capturedImage}
+                        />
+
+                        <View style={styles.captureSuccessOverlay}>
+                          <Text style={styles.captureSuccessText}>
+                            Photo Captured!
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Bottom section with submit/cancel buttons */}
+                  <View style={styles.bottomSection}>
+                    {capturedPhotoUri ? (
+                      <View style={styles.buttonContainer}>
+                        <TouchableOpacity
+                          style={[
+                            styles.cancelButton,
+                            {
+                              width: "50%",
+                              height: getResponsiveSize(40),
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 10,
+                            },
+                          ]}
+                          onPress={handleCancel}
+                          disabled={isProcessing}
+                        >
+                          <Ionicons
+                            name="close-circle"
+                            size={22}
+                            color="#03045E"
+                          />
+                          <Text style={styles.buttonTextCancel}>Cancel</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.submitButton,
+                            {
+                              width: "50%",
+                              height: getResponsiveSize(40),
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 10,
+                            },
+                          ]}
+                          onPress={() => setShowConfirmModal(true)}
+                          disabled={isProcessing}
+                        >
+                          {isLoading ? (
+                            <ActivityIndicator size="small" color="#fafafa" />
+                          ) : (
+                            <>
+                              <Text style={styles.buttonText}>Submit</Text>
+                              <Ionicons
+                                name="checkmark-circle"
+                                size={22}
+                                color="#fafafa"
+                              />
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Text style={styles.instructionText}>
+                        {faces.length > 0
+                          ? faceDetected
+                            ? "Please hold still..."
+                            : "Ready to capture!"
+                          : "Center your face in the frame"}
+                      </Text>
+                    )}
+                  </View>
+                  {/* Header with retry button when photo is captured */}
+                  {capturedPhotoUri && (
+                    <View style={styles.headerContainer}>
+                      <TouchableOpacity
+                        style={styles.retryButton}
+                        onPress={resetCamera}
+                        disabled={isProcessing}
+                      >
+                        <Ionicons name="camera" size={22} color="#fafafa" />
+                        <Text style={styles.retryText}>Capture Again</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* Modals - unchanged */}
+              <Modal
+                visible={showConfirmModal}
+                transparent={true}
+                animationType="fade"
               >
-                <Ionicons name="close-circle-outline" size={40} color="red" />
-                <Text style={styles.buttonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={() => setShowConfirmModal(true)}
-                disabled={isProcessing}
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalContainer}>
+                    <View style={styles.modalHeader}>
+                      <Text style={styles.modalTitle}>Confirm Submission</Text>
+                    </View>
+                    <View style={styles.modalBody}>
+                      <Text style={styles.modalText}>
+                        Are you sure you want to submit this photo?
+                      </Text>
+                    </View>
+                    <View style={styles.modalFooter}>
+                      <TouchableOpacity
+                        style={[styles.modalButton, styles.modalCancelButton]}
+                        onPress={() => setShowConfirmModal(false)}
+                      >
+                        <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.modalButton, styles.modalConfirmButton]}
+                        onPress={handleConfirmSubmit}
+                      >
+                        <Text style={styles.modalConfirmButtonText}>
+                          Confirm
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+              <Modal
+                visible={showCancelModal}
+                transparent={true}
+                animationType="fade"
               >
-                {isProcessing ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons
-                      name="checkmark-circle-outline"
-                      size={40}
-                      color="#03045E"
-                    />
-                    <Text style={styles.buttonText}>Submit</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalContainer}>
+                    <View style={styles.modalHeaderCancel}>
+                      <Text style={styles.modalTitle}>Confirm Cancel</Text>
+                    </View>
+                    <View style={styles.modalBody}>
+                      <Text style={styles.modalTextCancel}>
+                        Are you sure you want to cancel?
+                      </Text>
+                    </View>
+                    <View style={styles.modalFooter}>
+                      <TouchableOpacity
+                        style={[styles.modalButton, styles.modalCancelButton]}
+                        onPress={() => setShowCancelModal(false)}
+                      >
+                        <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.modalButton, styles.modalConfirmButton]}
+                        onPress={confirmCancel}
+                      >
+                        <Text style={styles.modalConfirmButtonText}>
+                          Confirm
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+              {/* <Modal
+                visible={showThankYouModal}
+                transparent={true}
+                animationType="fade"
+              >
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalContainer}>
+                    <View style={styles.thankYouModalBody}>
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={64}
+                        color="#00A86B"
+                        style={styles.modalIcon}
+                      />
+                      <Text style={styles.thankYouTitle}>Thank You!</Text>
+                      <Text style={styles.thankYouText}>
+                        Your visit has been registered successfully.
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </Modal> */}
+              <Modal
+                visible={showThankYouModal}
+                transparent={false} // Full screen modal, no transparency
+                animationType="slide" // Slide in animation
+              >
+                <View style={styles.fullScreenModal}>
+                  <Image
+                    source={require("../../assets/thankyou.png")} // Replace with your image source
+                    style={styles.fullScreenImage}
+                    resizeMode="cover"
+                  />
+                </View>
+              </Modal>
             </View>
-          ) : (
-            <Text style={styles.instructionText}>
-              {faces.length > 0
-                ? faceDetectedRef.current
-                  ? "Please hold still..."
-                  : "Ready to capture!"
-                : "Center your face in the frame"}
-            </Text>
-          )}
+          </View>
         </View>
-
-        {/* Modals - unchanged */}
-        <Modal
-          visible={showConfirmModal}
-          transparent={true}
-          animationType="fade"
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Confirm Submission</Text>
-              </View>
-              <View style={styles.modalBody}>
-                <Text style={styles.modalText}>
-                  Are you sure you want to submit this photo?
-                </Text>
-              </View>
-              <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalCancelButton]}
-                  onPress={() => setShowConfirmModal(false)}
-                >
-                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalConfirmButton]}
-                  onPress={handleConfirmSubmit}
-                >
-                  <Text style={styles.modalConfirmButtonText}>Confirm</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        <Modal
-          visible={showCancelModal}
-          transparent={true}
-          animationType="fade"
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeaderCancel}>
-                <Text style={styles.modalTitle}>Confirm Cancel</Text>
-              </View>
-              <View style={styles.modalBody}>
-                <Text style={styles.modalTextCancel}>
-                  Are you sure you want to cancel?
-                </Text>
-              </View>
-              <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalCancelButton]}
-                  onPress={() => setShowCancelModal(false)}
-                >
-                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalConfirmButton]}
-                  onPress={confirmCancel}
-                >
-                  <Text style={styles.modalConfirmButtonText}>Confirm</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        <Modal
-          visible={showThankYouModal}
-          transparent={true}
-          animationType="fade"
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.thankYouModalBody}>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={64}
-                  color="#00A86B"
-                  style={styles.modalIcon}
-                />
-                <Text style={styles.thankYouTitle}>Thank You!</Text>
-                <Text style={styles.thankYouText}>
-                  Your visit has been registered successfully.
-                </Text>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      </View>
+      </Animated.View>
     </View>
   );
 };
@@ -749,9 +1046,45 @@ const CameraScreen = (props: Props) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "white",
+  },
+  container3: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+
+    borderRadius: 10,
+    backgroundColor: "#EEF2F6",
   },
   borderContainer: {
+    padding: 15,
+    backgroundColor: "#EEF2F6",
+    // borderWidth: 14,
+    // borderColor: "#03045E", // Sky blue color
+    // borderRadius: 2,
+    // overflow: "hidden",
+  },
+  container2: {
+    flex: 1,
+    backgroundColor: "#EEF2F6",
+  },
+  screen: {
+    flex: 1,
+    width: width,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullScreenModal: {
+    flex: 1,
+    backgroundColor: "transparent",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullScreenImage: {
+    width: 250,
+    height: 250,
+  },
+  borderContainer2: {
     borderWidth: 14,
     borderColor: "#03045E", // Sky blue color
     borderRadius: 10,
@@ -767,24 +1100,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#EEF2F6",
   },
   headerContainer: {
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    paddingHorizontal: 19,
-    marginBottom: 15,
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
   },
   retryButton: {
     flexDirection: "row",
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#03045E",
+
+    backgroundColor: "#03045E",
+    height: 40,
+    width: "100%",
+    borderRadius: 10,
   },
   retryText: {
-    color: "#03045E",
+    color: "#FAFAFA",
     fontFamily: "OpenSans_Condensed-SemiBold",
     fontSize: 14,
     marginLeft: 5,
@@ -811,17 +1146,34 @@ const styles = StyleSheet.create({
     fontFamily: "monospace",
   },
   cameraWrapper: {
-    width: "90%",
-    height: "40%",
+    width: isTablet ? 400 : 306,
+    height: isTablet ? 400 : 306,
     overflow: "hidden",
     borderRadius: 20,
     borderColor: "#03045E",
     borderWidth: 2,
-    elevation: 5,
+    elevation: 3,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+  },
+  cameraInitializingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  initializingText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "600",
+    marginTop: 16,
   },
   camera: {
     width: "100%",
@@ -847,7 +1199,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: "OpenSans_Condensed-Bold",
     textAlign: "center",
-    backgroundColor: "rgba(255,0,0,0.5)",
+    backgroundColor: "rgba(255,0,0,0.3)",
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 10,
@@ -859,13 +1211,13 @@ const styles = StyleSheet.create({
     height: "100%",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(0,100,0,0.2)",
+    backgroundColor: "#EEF2F6",
   },
   steadyText: {
     color: "white",
     fontSize: 15,
     fontFamily: "OpenSans_Condensed-SemiBold",
-    backgroundColor: "rgba(0,100,0,0.7)",
+    backgroundColor: "rgba(0,100,0,0.3)",
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 15,
@@ -876,7 +1228,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject, // Fills the entire screen
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "white",
+    backgroundColor: "#EEF2F6",
   },
   countdownText: {
     color: "white",
@@ -926,46 +1278,47 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 18,
     fontFamily: "OpenSans_Condensed-Bold",
-    backgroundColor: "rgba(0,150,0,0.8)",
+    backgroundColor: "rgba(0,150,0,0.3)",
     paddingHorizontal: 25,
     paddingVertical: 10,
-    borderRadius: 25,
+    borderRadius: 10,
     overflow: "hidden",
   },
   buttonContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    width: "98%",
+    marginTop: 20,
+    justifyContent: "center", // Center buttons horizontally
+    alignItems: "center", // Align buttons vertically
+    width: "100%",
+    gap: 20, // Add space between buttons
   },
   cancelButton: {
     backgroundColor: "transparent",
-    paddingVertical: 5,
-    paddingHorizontal: 5,
+    borderColor: "#03045E",
+    borderWidth: 2,
+    padding: 7,
+    borderRadius: 5,
     alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    marginLeft: 10,
+    marginTop: 40,
+    marginBottom: 30,
   },
   submitButton: {
-    backgroundColor: "transparent",
-    paddingVertical: 5,
-    paddingHorizontal: 5,
-    marginRight: 10,
+    backgroundColor: "#03045E",
+    padding: 8,
+    borderRadius: 5,
     alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
+    marginTop: 40,
+    marginBottom: 30,
   },
   buttonText: {
-    color: "#03045E",
-    fontSize: 17,
+    color: "white",
+    fontSize: isTablet ? 20 : 14,
     fontFamily: "OpenSans_Condensed-Bold",
-    marginLeft: 15,
   },
   buttonTextCancel: {
-    color: "red",
-    fontSize: 17,
+    color: "#02023C",
+    fontSize: isTablet ? 20 : 14,
     fontFamily: "OpenSans_Condensed-Bold",
-    marginLeft: 8,
   },
   // Modal styles
   modalOverlay: {
@@ -1067,15 +1420,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: "OpenSans_Condensed-Regular",
   },
-  countdownContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#f5f5f5",
-  },
+  // countdownContainer: {
+  //   flex: 1,
+  //   justifyContent: "center",
+  //   alignItems: "center",
+  //   backgroundColor: "#f5f5f5",
+  // },
   countdownTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 30,
+    fontFamily: "OpenSans_Condensed-Bold",
     color: "#03045E",
     marginBottom: 10,
   },
@@ -1088,7 +1441,7 @@ const styles = StyleSheet.create({
   },
   initialCountdownText: {
     fontSize: 80,
-    fontWeight: "bold",
+    fontFamily: "OpenSans_Condensed-Bold",
     color: "#03045E",
   },
   captureCountdownText: {

@@ -54,9 +54,9 @@ const compressImage = async (imageBase64: string): Promise<string> => {
     // Clean up temporary files
     await FileSystem.deleteAsync(tempFilePath, { idempotent: true });
 
-    console.log(
-      `Compressed image from ${base64Data.length} to ${compressedBase64.length} characters`
-    );
+    // console.log(
+    //   `Compressed image from ${base64Data.length} to ${compressedBase64.length} characters`
+    // );
     return compressedBase64;
   } catch (error) {
     console.error("Error compressing image:", error);
@@ -130,9 +130,9 @@ export const submitVisitor = async (
       visitor_mobile_no: visitorMobileNo,
       visiting_tenant_id: visitingTenantId,
     });
-    console.log("API Response Status:", response.status);
-    console.log("API Response Headers:", JSON.stringify(response.headers));
-    console.log("API Response Data:", JSON.stringify(response.data));
+    // console.log("API Response Status:", response.status);
+    // console.log("API Response Headers:", JSON.stringify(response.headers));
+    // console.log("API Response Data:", JSON.stringify(response.data));
 
     // Check if there's an ID field in the response - use consistent extraction
     const responseId =
@@ -249,6 +249,9 @@ export const submitVisitor = async (
  */
 const syncVisitor = async (visitor: Visitor): Promise<boolean> => {
   try {
+    console.log(
+      `[SYNC] Attempting to sync visitor record with local ID: ${visitor.id}`
+    );
     let base64Data = "";
 
     // Read image from file
@@ -258,6 +261,13 @@ const syncVisitor = async (visitor: Visitor): Promise<boolean> => {
         base64Data = await FileSystem.readAsStringAsync(visitor.visitorPhoto, {
           encoding: FileSystem.EncodingType.Base64,
         });
+        // console.log(
+        //   `[SYNC] Read image for visitor ${visitor.id} from ${visitor.visitorPhoto}`
+        // );
+      } else {
+        // console.warn(
+        //   `[SYNC] Image file not found for visitor ${visitor.id} at ${visitor.visitorPhoto}`
+        // );
       }
     }
 
@@ -270,23 +280,56 @@ const syncVisitor = async (visitor: Visitor): Promise<boolean> => {
     };
 
     // Submit to API
+    console.log(
+      `[SYNC] Submitting visitor ${visitor.id} to API with payload:`,
+      {
+        visitor_name: visitor.visitorName,
+        photo: {
+          image_name: photoObject.image_name,
+          image_base64_length: photoObject.image_base64.length,
+        },
+        visitor_mobile_no: visitor.visitorMobileNo,
+        visiting_tenant_id: visitor.visitingTenantId,
+      }
+    );
+
     const response = await axiosInstance.post(API_ENDPOINT, {
       visitor_name: visitor.visitorName,
       photo: photoObject,
       visitor_mobile_no: visitor.visitorMobileNo,
       visiting_tenant_id: visitor.visitingTenantId,
-      timestamp: visitor.timestamp,
+      //timestamp: visitor.timestamp,
     });
+
+    console.log(
+      `[SYNC] API response for visitor ${visitor.id}:`,
+      response.data
+    );
+    const filePath = visitor.visitorPhoto;
 
     // Update the record and clean up
     await database.write(async () => {
       await visitor.update((v: Visitor) => {
         v.isSynced = true;
         v.serverId = response.data.id || null;
+        v.visitorPhoto = "";
       });
     });
+    console.log(`[SYNC] Visitor ${visitor.id} synced successfully.`);
+    if (filePath) {
+      try {
+        await FileSystem.deleteAsync(filePath, { idempotent: true });
+        // console.log(
+        //   `[SYNC] Deleted local image file for visitor ${visitor.id} at ${filePath}`
+        // );
+      } catch (err) {
+        console.error(
+          `[SYNC] Failed to delete local image file for visitor ${visitor.id}`,
+          err
+        );
+      }
+    }
 
-    console.log(`Visitor ${visitor.id} synced successfully.`);
     return true;
   } catch (error) {
     console.error("Sync failed for visitor", visitor.id, error);
@@ -349,27 +392,41 @@ export const syncVisitors = async (): Promise<{
 /**
  * Cleans up old image files that are no longer needed
  */
+/**
+ * Cleans up old image files that are no longer referenced by any visitor record.
+ * Only deletes files that are not in use and have not been modified in the last hour.
+ */
 export const cleanupOldImages = async (): Promise<void> => {
   try {
-    // Get all synced visitors
-    const syncedVisitors = await database
+    // Fetch all visitor records that have a non-empty visitorPhoto field.
+    // (Synced records have visitorPhoto cleared to an empty string.)
+    const visitorsWithImages = await database
       .get<Visitor>("visitors")
-      .query(Q.where("is_synced", true))
+      .query(
+        Q.and(
+          Q.where("visitor_photo", Q.notEq(null)),
+          Q.where("visitor_photo", Q.notEq(""))
+        )
+      )
       .fetch();
 
-    // Get file paths that are still in use
-    const activeFilePaths = syncedVisitors
+    // Build a list of active file paths that are still referenced.
+    const activeFilePaths = visitorsWithImages
       .map((visitor) => visitor.visitorPhoto)
-      .filter(Boolean);
+      .filter((path) => path && path.length > 0);
 
-    // Get all image files
+    // console.log("[CLEANUP] Active file paths in use:", activeFilePaths);
+
+    // Get all image files in the visitor images directory.
     const files = await FileSystem.readDirectoryAsync(VISITOR_IMAGES_DIR);
     const imagePaths = files.map((file) => `${VISITOR_IMAGES_DIR}/${file}`);
+    // console.log("[CLEANUP] All image files in directory:", imagePaths);
 
-    // Find files that are no longer needed
-    const oneHourAgo = Date.now() - 3600000; // 1 hour in milliseconds
-    const filesToDelete = [];
+    // Define a cutoff time (files older than 1 hour will be considered for deletion).
+    const oneHourAgo = Date.now() - 3600000;
+    const filesToDelete: string[] = [];
 
+    // Check each image file to see if it's not in use and is older than the cutoff.
     for (const path of imagePaths) {
       if (!activeFilePaths.includes(path)) {
         const fileInfo = await FileSystem.getInfoAsync(path);
@@ -383,14 +440,17 @@ export const cleanupOldImages = async (): Promise<void> => {
       }
     }
 
-    // Delete unused files
+    // Delete the unused files.
     for (const filePath of filesToDelete) {
       await FileSystem.deleteAsync(filePath, { idempotent: true });
+      console.log(`[CLEANUP] Deleted unused file: ${filePath}`);
     }
 
-    console.log(`Cleaned up ${filesToDelete.length} old image files`);
+    console.log(
+      `[CLEANUP] Cleaned up ${filesToDelete.length} old image file(s)`
+    );
   } catch (error) {
-    console.error("Error cleaning up old images:", error);
+    console.error("[CLEANUP] Error cleaning up old images:", error);
   }
 };
 

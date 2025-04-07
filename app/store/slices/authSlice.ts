@@ -22,6 +22,11 @@ interface AuthState {
   passwordError: string | null;
   isEmailValid: boolean;
   isPasswordValid: boolean;
+
+  forgotPasswordEmail: string;
+
+  forgotPasswordEmailError: string | null;
+  isForgotPasswordEmailValid: boolean;
 }
 
 const initialState: AuthState = {
@@ -35,6 +40,10 @@ const initialState: AuthState = {
   passwordError: null,
   isEmailValid: true,
   isPasswordValid: true,
+
+  forgotPasswordEmail: "",
+  forgotPasswordEmailError: null,
+  isForgotPasswordEmailValid: true,
 };
 
 export const authSlice = createSlice({
@@ -97,6 +106,20 @@ export const authSlice = createSlice({
       state.isEmailValid = true;
       state.isPasswordValid = true;
     },
+    setForgotPasswordEmail: (state, action: PayloadAction<string>) => {
+      state.forgotPasswordEmail = action.payload;
+    },
+    setForgotPasswordEmailError: (
+      state,
+      action: PayloadAction<string | null>
+    ) => {
+      state.forgotPasswordEmailError = action.payload;
+      state.isForgotPasswordEmailValid = action.payload === null;
+    },
+    clearForgotPasswordEmailError: (state) => {
+      state.forgotPasswordEmailError = null;
+      state.isForgotPasswordEmailValid = true;
+    },
   },
 });
 
@@ -110,6 +133,9 @@ export const {
   clearEmailError,
   clearPasswordError,
   resetAuthErrors,
+  setForgotPasswordEmail,
+  setForgotPasswordEmailError,
+  clearForgotPasswordEmailError,
 } = authSlice.actions;
 
 export default authSlice.reducer;
@@ -131,5 +157,13 @@ export const selectPasswordError = (state: { auth: AuthState }) =>
   state.auth.passwordError;
 export const selectIsEmailValid = (state: { auth: AuthState }) =>
   state.auth.isEmailValid;
+
 export const selectIsPasswordValid = (state: { auth: AuthState }) =>
   state.auth.isPasswordValid;
+
+export const selectForgotPasswordEmail = (state: { auth: AuthState }) =>
+  state.auth.forgotPasswordEmail;
+export const selectForgotPasswordEmailError = (state: { auth: AuthState }) =>
+  state.auth.forgotPasswordEmailError;
+export const selectIsForgotPasswordEmailValid = (state: { auth: AuthState }) =>
+  state.auth.isForgotPasswordEmailValid;

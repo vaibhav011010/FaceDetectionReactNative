@@ -20,12 +20,13 @@ export const companiesSchema = tableSchema({
   columns: [
     { name: "tenant_id", type: "number" },
     { name: "tenant_name", type: "string" },
+    { name: "user_id", type: "string" },
   ],
 });
 
 // Final Schema
 const schema = appSchema({
-  version: 6, // Increment version
+  version: 9, // Increment version
   tables: [
     visitorSchema,
     companiesSchema, // ✅ Add this
@@ -41,6 +42,7 @@ const schema = appSchema({
         { name: "permissions", type: "string" },
         { name: "access_token", type: "string" },
         { name: "refresh_token", type: "string" },
+        { name: "is_logged_in", type: "boolean", isOptional: true },
       ],
     }),
   ],

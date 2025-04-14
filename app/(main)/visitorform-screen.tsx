@@ -82,6 +82,8 @@ export default function VisitorFormScreen() {
   const currentSlide = useRef(new Animated.Value(0)).current;
 
   const [isReady, setIsReady] = useState(false);
+  // Add this to your component's state
+  const [isCompanySelected, setIsCompanySelected] = useState(false);
 
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const {
@@ -121,6 +123,7 @@ export default function VisitorFormScreen() {
     }
     setDisplayCompanyName(text); // Update display text
     dispatch(setVisitingCompany(text as any));
+    setIsCompanySelected(false);
 
     // Clear any previous timer
     if (searchTimeout) {
@@ -240,16 +243,19 @@ export default function VisitorFormScreen() {
     }
 
     // Validate Visiting Company
-    if (
+    // Validate Visiting Company
+    if (!isCompanySelected) {
+      dispatch(setCompanyError("Please select a company from the dropdown"));
+      isValid = false;
+    } else if (
       visitingCompany === null ||
       visitingCompany === undefined ||
       (typeof visitingCompany === "string" && visitingCompany.trim() === "") ||
       visitingCompany === 0
     ) {
-      dispatch(setCompanyError("Please select a company"));
+      dispatch(setCompanyError("Please select a valid company"));
       isValid = false;
     }
-
     return isValid;
   };
 
@@ -264,7 +270,7 @@ export default function VisitorFormScreen() {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      router.replace("/camera-screen");
+      router.replace("/camera-screen2");
     });
   };
 
@@ -273,6 +279,7 @@ export default function VisitorFormScreen() {
     console.log("Selected company:", company);
     Keyboard.dismiss();
     setDisplayCompanyName(company.label);
+    setIsCompanySelected(true);
     dispatch(
       selectCompany({
         label: company.label,
@@ -286,6 +293,7 @@ export default function VisitorFormScreen() {
   const handleClearCompany = () => {
     setDisplayCompanyName(""); // Clear display text
     dispatch(clearVisitingCompany());
+    setIsCompanySelected(false);
   };
   const handleClearName = () => {
     dispatch(clearVisitorName());

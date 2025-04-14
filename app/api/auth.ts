@@ -11,9 +11,23 @@ export const login = async (email: string, password: string) => {
     password,
   });
 
+  // // Check if user is already logged in on another device
+  // if (response.data.isLoggedIn === true) {
+  //   throw new Error("ALREADY_LOGGED_IN");
+  // }
+
+  // Check if plan has expired
+  const planExpireDate = new Date(
+    response.data.data.corporate_park_detail.plan_expire_datetime
+  );
+  if (planExpireDate < new Date()) {
+    throw new Error("PLAN_EXPIRED");
+  }
   // Destructure the API response
   const { refresh, access, data } = response.data;
   const { user_detail, corporate_park_detail, role_detail, permission } = data;
+
+  let isFirstLogin = false;
 
   await database.write(async () => {
     const userCollection = database.get<User>("users");
@@ -23,36 +37,42 @@ export const login = async (email: string, password: string) => {
       .fetch();
 
     if (existingUsers.length > 0) {
-      // If a matching record exists, update its tokens and other fields if needed
+      // User exists - check if isFirstLogin is already set
+      isFirstLogin = existingUsers[0].isFirstLogin === true;
+
       await existingUsers[0].update((user) => {
         user.accessToken = access;
         user.refreshToken = refresh;
-        // Optionally update other fields to ensure data consistency
         user.email = user_detail.email;
         user.corporateParkId = corporate_park_detail.id;
         user.corporateParkName = corporate_park_detail.corporate_park_name;
         user.roleId = role_detail.id;
         user.roleName = role_detail.role_name;
         user.permissions = JSON.stringify(permission);
+        user.isLoggedIn = true;
+        // Don't change isFirstLogin here, keep its existing value
       });
     } else {
-      // If no matching record exists, create a new one
+      // This is a new user in our local database - consider this a first login
+      isFirstLogin = true;
+
       await userCollection.create((user) => {
-        // Save the API's user id into the dedicated column "user_id"
         user.userId = user_detail.id;
         user.email = user_detail.email;
         user.corporateParkId = corporate_park_detail.id;
         user.corporateParkName = corporate_park_detail.corporate_park_name;
         user.roleId = role_detail.id;
         user.roleName = role_detail.role_name;
-        user.permissions = JSON.stringify(permission); // Save permissions as JSON string
+        user.permissions = JSON.stringify(permission);
         user.accessToken = access;
         user.refreshToken = refresh;
+        user.isLoggedIn = true;
+        user.isFirstLogin = true; // Set first login flag for new users
       });
     }
   });
 
-  // Return all fields needed by the login handler
+  // Return all fields including our client-side first login flag
   return {
     access,
     refresh,
@@ -60,6 +80,7 @@ export const login = async (email: string, password: string) => {
     corporate_park_detail,
     role_detail,
     permission,
+    isFirstLogin,
   };
 };
 
@@ -100,5 +121,46 @@ export const refreshAccessToken = async () => {
   } catch (error) {
     console.error("Failed to refresh token", error);
     return null;
+  }
+};
+// Add to your auth.ts
+export const changePassword = async (
+  oldPassword: string,
+  newPassword: string,
+  confirmPassword: string
+) => {
+  // Get the current access token
+  const accessToken = await getAccessToken();
+
+  if (!accessToken) {
+    throw new Error("No access token found, please login again");
+  }
+
+  try {
+    const response = await axiosInstance.post("/accounts/change-password/", {
+      old_password: oldPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    });
+
+    // If password change is successful, update the isFirstLogin flag
+    await database.write(async () => {
+      const userCollection = database.get<User>("users");
+      const loggedInUsers = await userCollection
+        .query(Q.where("is_logged_in", true))
+        .fetch();
+
+      if (loggedInUsers.length > 0) {
+        await loggedInUsers[0].update((user) => {
+          user.isFirstLogin = false; // Set to false after password change
+          user.isLoggedIn = false;
+        });
+      }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error("Password change failed:", error);
+    throw error;
   }
 };

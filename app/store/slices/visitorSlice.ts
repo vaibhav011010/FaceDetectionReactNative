@@ -7,7 +7,7 @@ import NetInfo from "@react-native-community/netinfo";
 import { Q } from "@nozbe/watermelondb";
 
 // Define the state types
-interface Company {
+interface CompanyOption {
   label: string;
   value: string;
 }
@@ -17,7 +17,7 @@ interface VisitorState {
   visitorMobile: string;
   visitingCompany: number | null | string;
   photo: string | null; // Base64 or URI of the photo
-  filteredCompanies: Company[];
+  filteredCompanies: CompanyOption[];
   isLoading: boolean;
   isLoadingCompanies: boolean;
   showCompanyDropdown: boolean;
@@ -108,7 +108,7 @@ const visitorSlice = createSlice({
     },
     // Remove filtering based on local companies.
     // Instead, we now use an API to fetch companies and update filteredCompanies.
-    setFilteredCompanies: (state, action: PayloadAction<Company[]>) => {
+    setFilteredCompanies: (state, action: PayloadAction<CompanyOption[]>) => {
       state.filteredCompanies = action.payload;
     },
     startLoadingCompanies: (state) => {
@@ -122,7 +122,7 @@ const visitorSlice = createSlice({
     },
     // When a company is selected, store its id (value) instead of the label
     // In your Redux slice
-    selectCompany: (state, action: PayloadAction<Company>) => {
+    selectCompany: (state, action: PayloadAction<CompanyOption>) => {
       state.visitingCompany = Number(action.payload.value); // Ensure ID is stored as a number
       state.showCompanyDropdown = false;
     },
@@ -279,7 +279,9 @@ export const loadInitialCompanies =
     }
   };
 // Helper function to save companies to DB
-const saveCompaniesToDB = async (companies: Company[], userId: string) => {
+// In your visitorSlice.ts file, update the saveCompaniesToDB function:
+
+const saveCompaniesToDB = async (companies: any[], userId: string) => {
   console.log(
     `Attempting to save ${companies.length} companies for user ${userId} to DB`
   );
@@ -288,62 +290,58 @@ const saveCompaniesToDB = async (companies: Company[], userId: string) => {
     await database.write(async () => {
       const companiesCollection = database.get("companies");
 
-      // Clear existing companies for this user only
+      // Fetch existing companies for this user
       const existingCompanies = await companiesCollection
         .query(Q.where("user_id", userId))
         .fetch();
 
       console.log(
-        `Found ${existingCompanies.length} existing companies for user ${userId}`
+        `Existing companies for user ${userId}:`,
+        existingCompanies.length
       );
 
-      for (const existing of existingCompanies) {
-        await existing.destroyPermanently();
+      // Delete existing records
+      for (const company of existingCompanies) {
+        await company.destroyPermanently();
       }
-      console.log(`Deleted existing companies for user ${userId}`);
 
-      // Add new companies with the user ID
-      console.log(
-        `Adding ${companies.length} new companies for user ${userId}`
-      );
+      // Create new records
       for (const comp of companies) {
         try {
           await companiesCollection.create((record: any) => {
-            record.tenant_id = comp.value;
-            record.tenant_name = comp.label;
-            record.user_id = userId; // Store user ID with each company
+            // Access the database column names directly
+            record._raw.tenant_id = Number(comp.value);
+            record._raw.tenant_name = comp.label;
+            record._raw.user_id = String(userId);
           });
+          console.log(`Created company: ${comp.label}`);
         } catch (createError) {
-          console.error(
-            `Error creating company record: ${comp.label}`,
-            createError
-          );
+          console.error(`Failed to create company: ${comp.label}`, createError);
         }
       }
-      console.log(`Finished adding companies to DB for user ${userId}`);
     });
-  } catch (error) {
-    console.error(`Failed to save companies to DB for user ${userId}:`, error);
-  }
 
-  // Verify the data was saved
-  try {
+    // Verify the save worked
     const companiesCollection = database.get("companies");
     const savedCompanies = await companiesCollection
-      .query(Q.where("user_id", userId))
+      .query(Q.where("user_id", String(userId)))
       .fetch();
+
     console.log(
       `After save: Found ${savedCompanies.length} companies in DB for user ${userId}`
     );
-  } catch (verifyError) {
-    console.error(`Error verifying saved companies:`, verifyError);
+  } catch (error) {
+    console.error(`Failed to save companies to DB:`, error);
   }
 };
+
+// And update loadCompaniesFromDB similarly:
+
 const loadCompaniesFromDB = async (userId: string) => {
   try {
     const companiesCollection = database.get("companies");
     const localCompanies = await companiesCollection
-      .query(Q.where("user_id", userId))
+      .query(Q.where("user_id", String(userId)))
       .fetch();
 
     console.log(
@@ -352,9 +350,9 @@ const loadCompaniesFromDB = async (userId: string) => {
     );
 
     return localCompanies.map((comp: any) => ({
-      label: comp.tenant_name,
-      value: comp.tenant_id,
-      userId: comp.user_id,
+      label: comp._raw.tenant_name,
+      value: comp._raw.tenant_id,
+      userId: comp._raw.user_id,
     }));
   } catch (error) {
     console.error(`Error loading companies from DB for user ${userId}:`, error);

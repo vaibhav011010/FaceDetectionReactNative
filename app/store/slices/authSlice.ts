@@ -81,6 +81,7 @@ export const authSlice = createSlice({
       state.isLoggedIn = false;
       state.user = null;
       state.accessToken = null;
+
       state.refreshToken = null;
     },
     setEmailError: (state, action: PayloadAction<string | null>) => {

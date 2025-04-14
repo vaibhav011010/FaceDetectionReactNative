@@ -42,6 +42,7 @@ import {
   clearVisitorMobile,
   clearVisitingCompany,
 } from "../store/slices/visitorSlice";
+import { useSharedFaceDetector } from "../../src/utility/faceDetectorSingleton";
 import { submitVisitor } from "../api/visitorForm";
 import debounce from "lodash.debounce";
 
@@ -63,6 +64,7 @@ type Props = {};
 const { width, height } = Dimensions.get("window");
 const isTablet = width >= 768;
 const CameraScreen = (props: Props) => {
+  console.log("camerascreen mounted 🚫");
   const router = useRouter();
   const pathname = usePathname();
   const segments = useSegments();
@@ -74,16 +76,13 @@ const CameraScreen = (props: Props) => {
   const dispatch = useDispatch<AppDispatch>();
   const currentSlide = useRef(new Animated.Value(0)).current;
   // Camera refs and states
+  const { detectFaces } = useSharedFaceDetector();
   const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice("front");
 
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [cameraKey, setCameraKey] = useState<number>(0);
   const [isResetting, setIsResetting] = useState(false);
-
-  // Performance optimized state
-  const [batteryMode, setBatteryMode] = useState("balanced");
-
   const [faces, setFaces] = useState<Face[]>([]);
   const [previewDimensions, setPreviewDimensions] = useState({
     width: 0,
@@ -92,12 +91,10 @@ const CameraScreen = (props: Props) => {
   const [isReady, setIsReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [frameProcessorEnabled, setFrameProcessorEnabled] = useState(true);
-
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
-
   // Flow states
   const [showInitialCountdown, setShowInitialCountdown] = useState(true);
   const [initialCountdown, setInitialCountdown] = useState(3);
@@ -106,20 +103,13 @@ const CameraScreen = (props: Props) => {
   const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
     null
   );
-  const isCameraMounted = useRef(true);
   const [cameraActive, setCameraActive] = useState(false);
-
   const [uiFaceDetected, setUIFaceDetected] = useState(false);
-
   // Modal states
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showThankYouModal, setShowThankYouModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
-
-  const isTakingPhoto = useRef(false);
   const isProcessingRef = useRef(false);
-  const isTakingPhotoRef = useRef(false);
-
   // Refs for performance optimization
   const countdownInProgressRef = useRef<boolean>(false);
   const frameProcessorEnabledRef = useRef<boolean>(true);
@@ -127,10 +117,28 @@ const CameraScreen = (props: Props) => {
   const faceDetectedRef = useRef<boolean>(false);
   const lastProcessedTimestamp = useRef<number>(0);
   const FRAME_PROCESS_INTERVAL = 1000;
-
   const [cameraInitializing, setCameraInitializing] = useState(true);
+  const handleCameraInitialized = () => {
+    setCameraInitializing(false);
+    setIsReady(true);
+    console.log("Camera initialized successfully");
+    // Enable frame processor only after camera is fully initialized
+    setTimeout(() => {
+      if (cameraActive) {
+        // setFrameProcessorEnabled(true);
+        toggleFrameProcessor(true);
+      }
+    }, 500);
+  };
+
+  useEffect(() => {
+    console.log("📷 Camera initialization attempt with key:", cameraKey);
+
+    return () => {
+      console.log("📷 Camera cleanup with key:", cameraKey);
+    };
+  }, [cameraKey]);
   // Replace all setFrameProcessorEnabled calls with:
-  // Replace ALL setFrameProcessorEnabled calls with:
   const toggleFrameProcessor = (enable: boolean) => {
     // Only toggle if state actually changes
     if (frameProcessorEnabled !== enable && cameraActive) {
@@ -139,7 +147,6 @@ const CameraScreen = (props: Props) => {
       frameProcessorEnabledRef.current = enable;
     }
   };
-
   // useEffect(() => {
   //   const interval = setInterval(() => {
   //     console.log("Camera ref check:", !!cameraRef.current);
@@ -160,13 +167,18 @@ const CameraScreen = (props: Props) => {
   }, [device]);
   useEffect(() => {
     console.log("Camera component mounted with ref:", !!cameraRef.current);
-
     return () => {
       console.log("Camera component unmounting, ref:", !!cameraRef.current);
     };
   }, []);
+  useEffect(() => {
+    console.log("🔵 CameraScreen MOUNTED with key:", cameraKey);
 
-  // Request camera permissions on mount and start initial countdown
+    return () => {
+      console.log("🔴 CameraScreen UNMOUNTED with key:", cameraKey);
+    };
+  }, []);
+
   // Replace your camera initialization code with this more reliable approach
   useEffect(() => {
     // Clear any previous timers to prevent memory leaks
@@ -202,7 +214,6 @@ const CameraScreen = (props: Props) => {
         );
       }
     };
-
     const startInitialCountdown = () => {
       // Start the initial countdown to prepare the user
       const initialCountdownInterval = setInterval(() => {
@@ -234,7 +245,6 @@ const CameraScreen = (props: Props) => {
           }),
         ]).start();
       }, 1000);
-
       // Store interval reference for cleanup
       return () => {
         clearInterval(initialCountdownInterval);
@@ -256,72 +266,55 @@ const CameraScreen = (props: Props) => {
       setCameraActive(false);
     };
   }, []);
-  useEffect(() => {
-    // When this specific screen is loaded
-    console.log("Screen loaded, resetting camera...");
-    resetCamera();
+  // useEffect(() => {
+  //   // When this specific screen is loaded
+  //   console.log("Screen loaded, resetting camera...");
+  //   resetCamera();
 
-    return () => {
-      // When navigating away
-      console.log("Navigating away, deactivating camera...");
-      setCameraActive(false);
-      frameProcessorEnabledRef.current = false;
-    };
-  }, [pathname, segments]);
+  //   return () => {
+  //     // When navigating away
+  //     console.log("Navigating away, deactivating camera...");
+  //     setCameraActive(false);
+  //     frameProcessorEnabledRef.current = false;
+  //   };
+  // }, [pathname, segments]);
 
-  useEffect(() => {
-    let mounted = true;
+  // useEffect(() => {
+  //   let mounted = true;
 
-    const initCamera = async () => {
-      try {
-        setCameraInitializing(true);
+  //   const initCamera = async () => {
+  //     try {
+  //       setCameraInitializing(true);
 
-        // Wait for device to be ready
-        await new Promise((resolve) => setTimeout(resolve, 100));
+  //       // Wait for device to be ready
+  //       await new Promise((resolve) => setTimeout(resolve, 100));
 
-        if (mounted) {
-          setCameraActive(true);
-          frameProcessorEnabledRef.current = true;
-        }
-      } finally {
-        if (mounted) {
-          setCameraInitializing(false);
-        }
-      }
-    };
+  //       if (mounted) {
+  //         setCameraActive(true);
+  //         frameProcessorEnabledRef.current = true;
+  //       }
+  //     } finally {
+  //       if (mounted) {
+  //         setCameraInitializing(false);
+  //       }
+  //     }
+  //   };
 
-    initCamera();
+  //   initCamera();
 
-    return () => {
-      mounted = false;
-      resetCaptureState();
-      setCameraActive(false);
-    };
-  }, [cameraKey]); // Re-run when cameraKey changes
+  //   return () => {
+  //     mounted = false;
+  //     resetCaptureState();
+  //     setCameraActive(false);
+  //   };
+  // }, [cameraKey]); // Re-run when cameraKey changes
   // Face detection handler with throttling
-  const { detectFaces } = useFaceDetector({
-    performanceMode: "fast", // Use fast mode instead of "accurate"
-    minFaceSize: 0.1, // Lower this to detect smaller faces
-    landmarkMode: "none", // Disable landmarks to avoid false negatives
-    contourMode: "none", // Disable contour detection to improve performance
-  });
-
-  const cameraSettings = useMemo(() => {
-    switch (batteryMode) {
-      case "low_power":
-        return {
-          photoQualityBalance: "speed",
-          pixelFormat: "yuv",
-          frameProcessorEnabled: false,
-        };
-      default:
-        return {
-          photoQualityBalance: "balanced",
-          pixelFormat: "native",
-          frameProcessorEnabled: true,
-        };
-    }
-  }, [batteryMode]);
+  // const { detectFaces } = useFaceDetector({
+  //   performanceMode: "fast", // Use fast mode instead of "accurate"
+  //   minFaceSize: 0.1, // Lower this to detect smaller faces
+  //   landmarkMode: "none", // Disable landmarks to avoid false negatives
+  //   contourMode: "none", // Disable contour detection to improve performance
+  // });
 
   const handleDetectedFaces = Worklets.createRunOnJS((newFaces: Face[]) => {
     // Skip if in invalid state
@@ -363,25 +356,6 @@ const CameraScreen = (props: Props) => {
     }
   });
 
-  // Memoize face boxes to prevent unnecessary re-renders
-  const renderFaceBoxes = useMemo(() => {
-    return faces.map((face, index) => (
-      <View
-        key={index}
-        style={[
-          styles.faceBox,
-          {
-            left: face.bounds.x,
-            top: face.bounds.y,
-            width: face.bounds.width,
-            height: face.bounds.height,
-          },
-        ]}
-      />
-    ));
-  }, [faces]);
-
-  // Optimized frame processor with throttling
   // Optimized frame processor with throttling
   const frameProcessor = useFrameProcessor(
     (frame) => {
@@ -581,7 +555,7 @@ const CameraScreen = (props: Props) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     // 4. Remount camera with new key
-    setCameraKey((prev) => prev + 1);
+    // setCameraKey((prev) => prev + 1);
 
     // 5. Re-enable after delay
     setTimeout(() => {
@@ -590,6 +564,76 @@ const CameraScreen = (props: Props) => {
       setIsResetting(false);
       frameProcessorEnabledRef.current = true;
     }, 800);
+  };
+
+  const handleCaptureAgain = async () => {
+    console.log("Disabling all camera systems...");
+
+    // First fully disable all camera systems
+    setFrameProcessorEnabled(false);
+    frameProcessorEnabledRef.current = false;
+    setCameraActive(false);
+
+    // Reset processing flags
+    isProcessingRef.current = false;
+    faceDetectedRef.current = false;
+
+    // Clear all timers
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
+
+    // Clear states
+    setCapturedPhotoUri(null);
+    setCapturedPhotoBase64(null);
+
+    // Force a longer pause to ensure cleanup
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Increment key to force full recreation
+    setCameraKey((prevKey) => prevKey + 1);
+
+    // Wait again before enabling
+    setTimeout(() => {
+      console.log("Re-enabling camera...");
+      setCameraActive(true);
+
+      // Don't enable frame processor immediately
+      setTimeout(() => {
+        if (cameraActive) {
+          console.log("Re-enabling frame processor...");
+          frameProcessorEnabledRef.current = true;
+          setFrameProcessorEnabled(true);
+        }
+      }, 1000);
+    }, 500);
+  };
+  useEffect(() => {
+    // Setup code...
+
+    return () => {
+      shutdownCamera();
+    };
+  }, []);
+
+  const shutdownCamera = () => {
+    console.log("Shutting down camera completely...");
+
+    // Disable all systems
+    setFrameProcessorEnabled(false);
+    frameProcessorEnabledRef.current = false;
+    setCameraActive(false);
+
+    // Clear all refs and listeners
+    faceDetectedRef.current = false;
+    isProcessingRef.current = false;
+
+    // Clear timers
+    if (faceCaptureTimerRef.current) {
+      clearTimeout(faceCaptureTimerRef.current);
+      faceCaptureTimerRef.current = null;
+    }
   };
   // Reset all states (used after successful submission)
   const resetStates = (clearRedux = false) => {
@@ -635,14 +679,14 @@ const CameraScreen = (props: Props) => {
     convertAndSubmit();
   };
 
-  // Loading and error states
-  if (hasPermission === null) {
-    return (
-      <View style={styles.loadingContainer1}>
-        <ActivityIndicator size="large" color="#03045E" />
-      </View>
-    );
-  }
+  // // Loading and error states
+  // if (hasPermission === null) {
+  //   return (
+  //     <View style={styles.loadingContainer1}>
+  //       <ActivityIndicator size="large" color="#03045E" />
+  //     </View>
+  //   );
+  // }
 
   if (hasPermission === false) {
     return (
@@ -695,18 +739,7 @@ const CameraScreen = (props: Props) => {
     const scaleFactor = width / 375; // Standard iPhone width as base
     return baseSize * scaleFactor;
   };
-  const handleCameraInitialized = () => {
-    setCameraInitializing(false);
-    setIsReady(true);
-    console.log("Camera initialized successfully");
-    // Enable frame processor only after camera is fully initialized
-    setTimeout(() => {
-      if (cameraActive) {
-        // setFrameProcessorEnabled(true);
-        toggleFrameProcessor(true);
-      }
-    }, 500);
-  };
+
   return (
     <View style={styles.container}>
       <Animated.View
@@ -749,92 +782,103 @@ const CameraScreen = (props: Props) => {
                       </View>
                     )}
 
-                    {!capturedPhotoUri ? (
-                      <Animated.View
-                        style={{
-                          opacity: fadeAnim,
-                          width: "100%",
-                          height: "100%",
-                          position: "relative", // Add this
-                        }}
-                      >
-                        {cameraActive && (
-                          <Camera
-                            key={cameraKey}
-                            ref={cameraRef}
-                            onInitialized={handleCameraInitialized}
-                            onError={(error) => {
-                              console.error("Camera error:", error);
-                              resetCamera();
-                            }}
-                            videoStabilizationMode="auto"
-                            style={styles.camera}
-                            device={device}
-                            photoQualityBalance="balanced"
-                            pixelFormat="yuv"
-                            enableZoomGesture={false}
-                            isActive={cameraActive}
-                            frameProcessor={
-                              frameProcessorEnabled ? frameProcessor : undefined
-                            }
-                            photo={true}
-                          />
-                        )}
+                    {/* {!capturedPhotoUri ? ( */}
+                    <Animated.View
+                      style={{
+                        opacity: fadeAnim,
+                        width: "100%",
+                        height: "100%",
+                        position: "relative", // Add this
+                      }}
+                    >
+                      {cameraActive && (
+                        <Camera
+                          // key={cameraKey}
+                          ref={cameraRef}
+                          onInitialized={handleCameraInitialized}
+                          onError={(error) => {
+                            console.error("Camera error:", error);
+                            resetCamera();
+                          }}
+                          videoStabilizationMode="auto"
+                          style={styles.camera}
+                          device={device}
+                          photoQualityBalance="balanced"
+                          pixelFormat="yuv"
+                          enableZoomGesture={false}
+                          isActive={cameraActive}
+                          frameProcessor={
+                            frameProcessorEnabled ? frameProcessor : undefined
+                          }
+                          photo={true}
+                        />
+                      )}
 
-                        {/* Modify face detection overlays */}
-                        {faces.length === 0 &&
+                      {/* Modify face detection overlays */}
+                      {faces.length === 0 &&
+                      !isProcessing &&
+                      !capturedPhotoUri ? (
+                        <View
+                          style={[
+                            styles.noFaceDetected,
+                            {
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              backgroundColor: "transparent", // Ensure overlay is transparent
+                            },
+                          ]}
+                        >
+                          <Text style={styles.noFaceText}>
+                            No Face Detected
+                          </Text>
+                          <Text style={styles.instructionText}>
+                            Please position your face in the frame
+                          </Text>
+                        </View>
+                      ) : faces.length > 0 &&
+                        uiFaceDetected &&
                         !isProcessing &&
                         !capturedPhotoUri ? (
-                          <View
-                            style={[
-                              styles.noFaceDetected,
-                              {
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                backgroundColor: "transparent", // Ensure overlay is transparent
-                              },
-                            ]}
-                          >
-                            <Text style={styles.noFaceText}>
-                              No Face Detected
-                            </Text>
-                            <Text style={styles.instructionText}>
-                              Please position your face in the frame
-                            </Text>
-                          </View>
-                        ) : faces.length > 0 &&
-                          uiFaceDetected &&
-                          !isProcessing &&
-                          !capturedPhotoUri ? (
-                          <View
-                            style={[
-                              styles.countdownOverlay,
-                              {
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                backgroundColor: "rgba(0,0,0,0.3)", // Semi-transparent overlay
-                              },
-                            ]}
-                          >
-                            <Text style={styles.steadyText}>Hold Steady</Text>
-                          </View>
-                        ) : null}
+                        <View
+                          style={[
+                            styles.countdownOverlay,
+                            {
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              backgroundColor: "rgba(0,0,0,0.3)", // Semi-transparent overlay
+                            },
+                          ]}
+                        >
+                          <Text style={styles.steadyText}>Hold Steady</Text>
+                        </View>
+                      ) : null}
 
-                        {/* Existing face boxes */}
-                        {!isProcessing &&
-                          !capturedPhotoUri &&
-                          frameProcessorEnabled &&
-                          renderFaceBoxes}
-                      </Animated.View>
-                    ) : (
+                      {/* Existing face boxes */}
+                      {!isProcessing &&
+                        !capturedPhotoUri &&
+                        frameProcessorEnabled}
+                    </Animated.View>
+                    {capturedPhotoUri && (
                       /* Captured photo display */
-                      <View style={styles.capturedPhotoContainer}>
+                      <View
+                        style={[
+                          styles.capturedPhotoContainer,
+                          {
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 10,
+                          },
+                        ]}
+                      >
                         <Image
                           source={{ uri: capturedPhotoUri }}
                           style={styles.capturedImage}
@@ -920,7 +964,7 @@ const CameraScreen = (props: Props) => {
                     <View style={styles.headerContainer}>
                       <TouchableOpacity
                         style={styles.retryButton}
-                        onPress={resetCamera}
+                        onPress={handleCaptureAgain}
                         disabled={isProcessing}
                       >
                         <Ionicons name="camera" size={22} color="#fafafa" />

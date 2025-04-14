@@ -106,6 +106,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
   const handleLogin = async (): Promise<void> => {
     console.log("handleLogin called");
+    // router.replace("/camera-screen2");
 
     const trimmedEmail = email.trim();
     validateEmail(trimmedEmail);
@@ -133,9 +134,13 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         permission,
       } = response;
 
+      // Determine if this is a first login based on database check
+      let isFirstLogin = false;
+
       await database.write(async () => {
         const userCollection = database.get<User>("users");
         const allUsers = await userCollection.query().fetch();
+
         for (const existingUser of allUsers) {
           await existingUser.update((user) => {
             user.isLoggedIn = false;
@@ -147,6 +152,9 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
           .fetch();
 
         if (existing.length > 0) {
+          // User exists in the database
+          isFirstLogin = existing[0].isFirstLogin === true; // Get existing value
+
           await existing[0].update((user) => {
             user.accessToken = access;
             user.refreshToken = refresh;
@@ -157,8 +165,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             user.roleName = role_detail.role_name;
             user.permissions = JSON.stringify(permission);
             user.isLoggedIn = true;
+            // We're not changing isFirstLogin here, maintaining its value
           });
         } else {
+          // New user in our database, consider this a first login
+          isFirstLogin = true;
+
           await userCollection.create((user) => {
             user.userId = user_detail.id;
             user.email = user_detail.email;
@@ -170,6 +182,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             user.accessToken = access;
             user.refreshToken = refresh;
             user.isLoggedIn = true;
+            user.isFirstLogin = true; // Set first login flag for new users
           });
         }
       });
@@ -182,6 +195,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         roleId: role_detail.id,
         roleName: role_detail.role_name,
         permissions: permission,
+        isFirstLogin: isFirstLogin,
       };
 
       console.log("Constructed user object:", user);
@@ -199,9 +213,18 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       console.log("loginSuccess dispatched");
 
       await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
-      // Navigate to the checkin screen after successful login
-      router.replace("/checkin-screen");
-      console.log("Navigation to checkin-screen complete");
+
+      // Check if this is a first login and redirect accordingly
+      if (isFirstLogin) {
+        console.log(
+          "First time login detected, redirecting to change password"
+        );
+        router.replace("/change-password-screen");
+      } else {
+        console.log("Normal login, redirecting to main app");
+        router.replace("/checkin-screen");
+      }
+      console.log("Navigation complete");
     } catch (error: any) {
       // Log the detailed error for debugging purposes
       console.error("Login failed:", error.toJSON ? error.toJSON() : error);
@@ -271,7 +294,200 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       dispatch(loginFailure(detailedError));
     }
   };
+  // const handleLogin = async (): Promise<void> => {
+  //   console.log("handleLogin called");
+  //   // router.replace("/camera-screen2");
 
+  //   const trimmedEmail = email.trim();
+  //   validateEmail(trimmedEmail);
+  //   validatePassword(password);
+
+  //   if (!trimmedEmail || !password) {
+  //     Alert.alert("Error", "Please fill in both email and password.");
+  //     return;
+  //   }
+
+  //   try {
+  //     dispatch(loginStart());
+  //     console.log("loginStart dispatched");
+
+  //     const response = await login(trimmedEmail, password);
+  //     console.log("API response received:", response);
+
+  //     // ✅ Destructure response values immediately
+  //     const {
+  //       access,
+  //       refresh,
+  //       user_detail,
+  //       corporate_park_detail,
+  //       role_detail,
+  //       permission,
+  //     } = response;
+
+  //     await database.write(async () => {
+  //       const userCollection = database.get<User>("users");
+  //       const allUsers = await userCollection.query().fetch();
+  //       for (const existingUser of allUsers) {
+  //         await existingUser.update((user) => {
+  //           user.isLoggedIn = false;
+  //         });
+  //       }
+
+  //       const existing = await userCollection
+  //         .query(Q.where("user_id", user_detail.id))
+  //         .fetch();
+
+  //       if (existing.length > 0) {
+  //         await existing[0].update((user) => {
+  //           user.accessToken = access;
+  //           user.refreshToken = refresh;
+  //           user.email = user_detail.email;
+  //           user.corporateParkId = corporate_park_detail.id;
+  //           user.corporateParkName = corporate_park_detail.corporate_park_name;
+  //           user.roleId = role_detail.id;
+  //           user.roleName = role_detail.role_name;
+  //           user.permissions = JSON.stringify(permission);
+  //           user.isLoggedIn = true;
+  //         });
+  //       } else {
+  //         await userCollection.create((user) => {
+  //           user.userId = user_detail.id;
+  //           user.email = user_detail.email;
+  //           user.corporateParkId = corporate_park_detail.id;
+  //           user.corporateParkName = corporate_park_detail.corporate_park_name;
+  //           user.roleId = role_detail.id;
+  //           user.roleName = role_detail.role_name;
+  //           user.permissions = JSON.stringify(permission);
+  //           user.accessToken = access;
+  //           user.refreshToken = refresh;
+  //           user.isLoggedIn = true;
+  //         });
+  //       }
+  //     });
+
+  //     const user = {
+  //       id: user_detail.id,
+  //       email: user_detail.email,
+  //       corporateParkId: corporate_park_detail.id,
+  //       corporateParkName: corporate_park_detail.corporate_park_name,
+  //       roleId: role_detail.id,
+  //       roleName: role_detail.role_name,
+  //       permissions: permission,
+  //     };
+
+  //     console.log("Constructed user object:", user);
+
+  //     // Dispatch loginSuccess with the user and token details
+  //     dispatch(
+  //       loginSuccess({
+  //         user,
+  //         accessToken: access,
+  //         refreshToken: refresh,
+  //       })
+  //     );
+  //     dispatch(setCorporateParkName(corporate_park_detail.corporate_park_name));
+  //     console.log("Corporate park name dispatched to global store");
+  //     console.log("loginSuccess dispatched");
+
+  //     // Start session monitoring after successful login
+  //     startSessionMonitoring();
+
+  //     await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
+  //     // Navigate to the checkin screen after successful login
+  //     router.replace("/checkin-screen");
+  //     console.log("Navigation to checkin-screen complete");
+  //   } catch (error: any) {
+  //     // Log the detailed error for debugging purposes
+  //     console.error("Login failed:", error.toJSON ? error.toJSON() : error);
+
+  //     // Check for specific error types from our modified login function
+  //     if (error.message === "ALREADY_LOGGED_IN") {
+  //       Alert.alert(
+  //         "Login Failed",
+  //         "You are already logged in on another device. Please log out from the other device first."
+  //       );
+  //       dispatch(loginFailure("Already logged in on another device"));
+  //       return;
+  //     }
+
+  //     if (error.message === "PLAN_EXPIRED") {
+  //       Alert.alert(
+  //         "Login Failed",
+  //         "Your plan has expired. Please contact your administrator."
+  //       );
+  //       dispatch(loginFailure("Plan expired"));
+  //       return;
+  //     }
+
+  //     // If the error has a response with a detailed message, use it
+  //     const detailedError =
+  //       error.response && error.response.data && error.response.data.message
+  //         ? error.response.data.message
+  //         : error.message || "Invalid email or password. Please try again.";
+
+  //     // If the error indicates a network error, attempt offline login
+  //     if (error.message && error.message.includes("Network Error")) {
+  //       console.log("Network error detected. Attempting offline login...");
+  //       try {
+  //         const userCollection = database.get<User>("users");
+  //         const storedUsers = await userCollection
+  //           .query(
+  //             // Query for a stored user with the same email
+  //             Q.where("email", trimmedEmail)
+  //           )
+  //           .fetch();
+  //         console.log(
+  //           "Offline query result, storedUsers count:",
+  //           storedUsers.length
+  //         );
+  //         if (storedUsers.length > 0) {
+  //           const storedUser = storedUsers[0];
+  //           console.log("Stored user found:", storedUser);
+  //           dispatch(
+  //             loginSuccess({
+  //               user: {
+  //                 id: Number(storedUser.userId),
+  //                 email: storedUser.email,
+  //                 corporateParkId: storedUser.corporateParkId,
+  //                 corporateParkName: storedUser.corporateParkName,
+  //                 roleId: storedUser.roleId,
+  //                 roleName: storedUser.roleName,
+  //                 permissions: storedUser.permissions
+  //                   ? JSON.parse(storedUser.permissions)
+  //                   : {},
+  //               },
+  //               accessToken: storedUser.accessToken,
+  //               refreshToken: storedUser.refreshToken,
+  //             })
+  //           );
+
+  //           // Start session monitoring after successful offline login
+  //           startSessionMonitoring();
+
+  //           console.log("Offline login success dispatched");
+  //           router.replace("/checkin-screen");
+  //           console.log("Offline navigation to checkin-screen complete");
+  //           return;
+  //         } else {
+  //           Alert.alert(
+  //             "Login Failed",
+  //             "No offline credentials found for this email."
+  //           );
+  //         }
+  //       } catch (offlineError) {
+  //         console.error("Offline login error:", offlineError);
+  //         Alert.alert(
+  //           "Login Failed",
+  //           "Offline login failed. Please try again later."
+  //         );
+  //       }
+  //     } else {
+  //       // Display the detailed error message from the response if available
+  //       Alert.alert("Login Failed", detailedError);
+  //     }
+  //     dispatch(loginFailure(detailedError));
+  //   }
+  // };
   const handleForgotPassword = () => {
     NetInfo.fetch().then((state) => {
       if (state.isConnected) {

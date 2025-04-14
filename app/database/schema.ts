@@ -26,7 +26,7 @@ export const companiesSchema = tableSchema({
 
 // Final Schema
 const schema = appSchema({
-  version: 9, // Increment version
+  version: 10, // Increment version
   tables: [
     visitorSchema,
     companiesSchema, // ✅ Add this
@@ -43,6 +43,7 @@ const schema = appSchema({
         { name: "access_token", type: "string" },
         { name: "refresh_token", type: "string" },
         { name: "is_logged_in", type: "boolean", isOptional: true },
+        { name: "is_first_login", type: "boolean", isOptional: true },
       ],
     }),
   ],

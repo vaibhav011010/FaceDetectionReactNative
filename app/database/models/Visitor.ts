@@ -11,4 +11,8 @@ export default class Visitor extends Model {
   @field("timestamp") timestamp!: number;
   @field("is_synced") isSynced!: boolean;
   @field("server_id") serverId: string | number | null | undefined;
+  // ✅ Add these two fields for sync handling
+  @field("record_uuid") recordUuid!: string;
+  @field("visitor_sync_status") visitorSyncStatus!: "synced" | "not_synced";
+  @field("visitor_photo_name") visitorPhotoName!: string;
 }

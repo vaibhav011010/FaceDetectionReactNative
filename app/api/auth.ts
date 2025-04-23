@@ -6,7 +6,7 @@ import { Q } from "@nozbe/watermelondb";
 import axiosBase from "./axiosBase";
 
 export const login = async (email: string, password: string) => {
-  const response = await axiosInstance.post(`/accounts/login/`, {
+  const response = await axiosBase.post(`/accounts/login/`, {
     email,
     password,
   });
@@ -27,6 +27,8 @@ export const login = async (email: string, password: string) => {
   const { refresh, access, data } = response.data;
   const { user_detail, corporate_park_detail, role_detail, permission } = data;
 
+  const needsPasswordChange = user_detail.change_password === false;
+
   let isFirstLogin = false;
 
   await database.write(async () => {
@@ -38,7 +40,7 @@ export const login = async (email: string, password: string) => {
 
     if (existingUsers.length > 0) {
       // User exists - check if isFirstLogin is already set
-      isFirstLogin = existingUsers[0].isFirstLogin === true;
+      //isFirstLogin = existingUsers[0].isFirstLogin === true;
 
       await existingUsers[0].update((user) => {
         user.accessToken = access;
@@ -50,6 +52,7 @@ export const login = async (email: string, password: string) => {
         user.roleName = role_detail.role_name;
         user.permissions = JSON.stringify(permission);
         user.isLoggedIn = true;
+        user.needsPasswordChange = needsPasswordChange; // ✅ Updated field
         // Don't change isFirstLogin here, keep its existing value
       });
     } else {
@@ -67,7 +70,7 @@ export const login = async (email: string, password: string) => {
         user.accessToken = access;
         user.refreshToken = refresh;
         user.isLoggedIn = true;
-        user.isFirstLogin = true; // Set first login flag for new users
+        user.needsPasswordChange = needsPasswordChange; // ✅ New user
       });
     }
   });
@@ -80,7 +83,7 @@ export const login = async (email: string, password: string) => {
     corporate_park_detail,
     role_detail,
     permission,
-    isFirstLogin,
+    needsPasswordChange,
   };
 };
 
@@ -106,14 +109,19 @@ export const refreshAccessToken = async () => {
 
   const refreshToken = users[0].refreshToken;
   try {
+    console.log("refresh token", refreshToken);
     const response = await axiosBase.post(`/api/token/refresh/`, {
       refresh: refreshToken,
     });
     const newAccessToken = response.data.access;
 
+    const newRefreshToken = response.data.refresh || refreshToken;
     await database.write(async () => {
       await users[0].update((user) => {
         user.accessToken = newAccessToken;
+        if (response.data.refresh) {
+          user.refreshToken = newRefreshToken;
+        }
       });
     });
 
@@ -152,7 +160,7 @@ export const changePassword = async (
 
       if (loggedInUsers.length > 0) {
         await loggedInUsers[0].update((user) => {
-          user.isFirstLogin = false; // Set to false after password change
+          user.needsPasswordChange = false;
           user.isLoggedIn = false;
         });
       }

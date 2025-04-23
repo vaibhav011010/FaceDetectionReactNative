@@ -55,6 +55,8 @@ import {
   loadInitialCompanies,
 } from "../store/slices/visitorSlice";
 import { AppDispatch, RootState } from "../store";
+import StarIcon from "@/src/utility/starIcon";
+import NextSvg from "@/src/utility/nextSvg";
 
 const { width, height } = Dimensions.get("window");
 export const isTablet = width >= 768;
@@ -736,11 +738,12 @@ export default function VisitorFormScreen() {
                           ]}
                           onPress={handleCancel}
                         >
-                          <Ionicons
+                          {/* <Ionicons
                             name="close-circle"
                             size={22}
                             color="#03045E"
-                          />
+                          /> */}
+                          <StarIcon />
                           <Text style={styles.canceltext}>Cancel</Text>
                         </TouchableOpacity>
                         <View style={{ width: "15%" }} />
@@ -759,11 +762,12 @@ export default function VisitorFormScreen() {
                           onPress={handleNext}
                         >
                           <Text style={styles.buttonText}>Next</Text>
-                          <Ionicons
+                          {/* <Ionicons
                             name="chevron-forward-outline"
                             size={22}
                             color="white"
-                          />
+                          /> */}
+                          <NextSvg />
                         </TouchableOpacity>
                       </View>
                     </View>

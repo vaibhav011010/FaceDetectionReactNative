@@ -1,13 +1,23 @@
+import "react-native-get-random-values";
 import axiosInstance from "../api/axiosInstance";
 import database from "../database";
 import Visitor from "../database/models/Visitor";
 import { Q } from "@nozbe/watermelondb";
 import * as FileSystem from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
+import { v4 as uuidv4 } from "uuid";
+import { AppState, AppStateStatus } from "react-native";
+import * as Crypto from "expo-crypto";
 
 // Use the relative endpoint as baseURL is set in axiosInstance
 const API_ENDPOINT = "/visitors/add_visitor/";
 const VISITOR_IMAGES_DIR = `${FileSystem.documentDirectory}visitor_images`;
+
+// Timer reference for sync
+let syncIntervalId: ReturnType<typeof setInterval> | null = null;
+
+const SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+let appStateListener: any = null;
 
 // Ensure the directory exists
 const ensureDirectoryExists = async () => {
@@ -31,6 +41,9 @@ const compressImage = async (imageBase64: string): Promise<string> => {
     const base64Data = imageBase64.includes("base64,")
       ? imageBase64.split("base64,")[1]
       : imageBase64;
+    if (!base64Data || typeof base64Data !== "string") {
+      throw new Error("Invalid base64 image data");
+    }
 
     await FileSystem.writeAsStringAsync(tempFilePath, base64Data, {
       encoding: FileSystem.EncodingType.Base64,
@@ -85,6 +98,82 @@ const saveImageToFile = async (base64Data: string): Promise<string> => {
 };
 
 /**
+ * Start the periodic sync timer
+ */
+export const startPeriodicSync = () => {
+  // Clear any existing timer
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+  }
+
+  // Set up new interval
+  syncIntervalId = setInterval(() => {
+    console.log("Running periodic sync (15-minute interval)");
+    syncVisitors();
+  }, SYNC_INTERVAL);
+
+  // Set up app state listener to handle background/foreground transitions
+  if (!appStateListener) {
+    appStateListener = AppState.addEventListener(
+      "change",
+      handleAppStateChange
+    );
+  }
+
+  console.log("Periodic sync started");
+};
+
+/**
+ * Handle app state changes
+ */
+const handleAppStateChange = (nextAppState: AppStateStatus) => {
+  if (nextAppState === "active") {
+    // App came to foreground, trigger a sync
+    console.log("App came to foreground, triggering sync");
+    syncVisitors();
+  }
+};
+
+/**
+ * Stop the periodic sync timer
+ */
+export const stopPeriodicSync = () => {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+  }
+
+  // Remove app state listener
+  if (appStateListener) {
+    appStateListener.remove();
+    appStateListener = null;
+  }
+
+  console.log("Periodic sync stopped");
+};
+
+/**
+ * Triggers sync when a security guard logs in
+ */
+export const triggerLoginSync = async () => {
+  console.log("Security guard logged in, triggering sync");
+
+  // Run the sync
+  const result = await syncVisitors();
+
+  // Start the periodic sync timer
+  startPeriodicSync();
+
+  return result;
+};
+
+/**
+ * Clean up and cancel sync timer on logout
+ */
+export const handleLogout = () => {
+  stopPeriodicSync();
+};
+/**
  * Submits a visitor record.
  * - If the API call succeeds, the record is stored locally as synced.
  * - If a network error occurs, the record is stored locally as unsynced for later sync.
@@ -115,6 +204,12 @@ export const submitVisitor = async (
     const timestamp = new Date().getTime();
     const imageName = `visitor_${timestamp}.jpg`;
 
+    console.log("About to generate UUID");
+
+    // Add this: Generate UUID for this record
+    const recordUuid = Crypto.randomUUID();
+    console.log("Generated UUID:", recordUuid);
+
     const photoObject = {
       image_name: imageName,
       image_base64: compressedPhotoBase64,
@@ -129,6 +224,15 @@ export const submitVisitor = async (
       photo: photoObject,
       visitor_mobile_no: visitorMobileNo,
       visiting_tenant_id: visitingTenantId,
+      uuid: recordUuid,
+    });
+    console.log("About to send API request with data:", {
+      visitor_name: visitorName,
+      visitor_mobile_no: visitorMobileNo,
+      visiting_tenant_id: visitingTenantId,
+      record_uuid: recordUuid,
+      // Don't log the full base64 image
+      photo_size: photoObject.image_base64.length,
     });
     // console.log("API Response Status:", response.status);
     // console.log("API Response Headers:", JSON.stringify(response.headers));
@@ -157,11 +261,17 @@ export const submitVisitor = async (
           console.log("Setting visitorPhoto");
           visitor.visitorPhoto = imageFilePath;
           console.log("Setting isSynced");
+          // visitor.visitorPhotoName = imageName;
+          console.log("Setting imageName");
           visitor.isSynced = true;
           console.log("Setting timestamp");
+          console.log("Setting syncStatus"); // Changed from isSynced
+          visitor.visitorSyncStatus = "synced";
           visitor.timestamp = Date.now();
           console.log("Setting serverId");
           visitor.serverId = responseId;
+          console.log("Setting recordUuid"); // Add this
+          visitor.recordUuid = recordUuid;
         });
       });
       return { success: true, data: response.data };
@@ -217,14 +327,20 @@ export const submitVisitor = async (
       console.log("Network error detected, storing locally");
 
       try {
+        const imageFilePath = await saveImageToFile(visitorPhotoBase64);
+        const imageName = `visitor_${Date.now()}.jpg`;
+
         await database.write(async () => {
           await database.get<Visitor>("visitors").create((visitor) => {
             visitor.visitorName = visitorName;
             visitor.visitorMobileNo = visitorMobileNo;
             visitor.visitingTenantId = visitingTenantId;
-            visitor.visitorPhoto = visitorPhotoBase64;
+            visitor.visitorPhoto = imageFilePath;
+            visitor.visitorPhotoName = imageName;
             visitor.timestamp = Date.now();
             visitor.isSynced = false;
+            visitor.recordUuid = Crypto.randomUUID();
+            visitor.visitorSyncStatus = "not_synced";
           });
         });
         console.log("Successfully stored locally for later sync");
@@ -245,97 +361,142 @@ export const submitVisitor = async (
   }
 };
 /**
- * Syncs a single visitor record
+ * Prepares a visitor record for sync
  */
-const syncVisitor = async (visitor: Visitor): Promise<boolean> => {
-  try {
-    console.log(
-      `[SYNC] Attempting to sync visitor record with local ID: ${visitor.id}`
-    );
-    let base64Data = "";
+const prepareVisitorForSync = async (visitor: Visitor) => {
+  let base64Data = "";
 
-    // Read image from file
-    if (visitor.visitorPhoto) {
-      const fileInfo = await FileSystem.getInfoAsync(visitor.visitorPhoto);
-      if (fileInfo.exists) {
-        base64Data = await FileSystem.readAsStringAsync(visitor.visitorPhoto, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        // console.log(
-        //   `[SYNC] Read image for visitor ${visitor.id} from ${visitor.visitorPhoto}`
-        // );
-      } else {
-        // console.warn(
-        //   `[SYNC] Image file not found for visitor ${visitor.id} at ${visitor.visitorPhoto}`
-        // );
-      }
-    }
-
-    // Generate image name
-    const imageName = `visitor_${visitor.timestamp || Date.now()}.jpg`;
-
-    const photoObject = {
-      image_name: imageName,
-      image_base64: base64Data,
-    };
-
-    // Submit to API
-    console.log(
-      `[SYNC] Submitting visitor ${visitor.id} to API with payload:`,
-      {
-        visitor_name: visitor.visitorName,
-        photo: {
-          image_name: photoObject.image_name,
-          image_base64_length: photoObject.image_base64.length,
-        },
-        visitor_mobile_no: visitor.visitorMobileNo,
-        visiting_tenant_id: visitor.visitingTenantId,
-      }
-    );
-
-    const response = await axiosInstance.post(API_ENDPOINT, {
-      visitor_name: visitor.visitorName,
-      photo: photoObject,
-      visitor_mobile_no: visitor.visitorMobileNo,
-      visiting_tenant_id: visitor.visitingTenantId,
-      //timestamp: visitor.timestamp,
-    });
-
-    console.log(
-      `[SYNC] API response for visitor ${visitor.id}:`,
-      response.data
-    );
-    const filePath = visitor.visitorPhoto;
-
-    // Update the record and clean up
-    await database.write(async () => {
-      await visitor.update((v: Visitor) => {
-        v.isSynced = true;
-        v.serverId = response.data.id || null;
-        v.visitorPhoto = "";
+  // Read image from file
+  if (visitor.visitorPhoto) {
+    const fileInfo = await FileSystem.getInfoAsync(visitor.visitorPhoto);
+    if (fileInfo.exists) {
+      base64Data = await FileSystem.readAsStringAsync(visitor.visitorPhoto, {
+        encoding: FileSystem.EncodingType.Base64,
       });
-    });
-    console.log(`[SYNC] Visitor ${visitor.id} synced successfully.`);
-    if (filePath) {
-      try {
-        await FileSystem.deleteAsync(filePath, { idempotent: true });
-        // console.log(
-        //   `[SYNC] Deleted local image file for visitor ${visitor.id} at ${filePath}`
-        // );
-      } catch (err) {
-        console.error(
-          `[SYNC] Failed to delete local image file for visitor ${visitor.id}`,
-          err
-        );
-      }
+    } else {
+      console.warn(
+        `[SYNC] Image file not found for visitor ${visitor.id} at ${visitor.visitorPhoto}`
+      );
+      return null; // 🔥 Prevent broken sync
     }
-
-    return true;
-  } catch (error) {
-    console.error("Sync failed for visitor", visitor.id, error);
-    return false;
   }
+
+  if (!base64Data) {
+    console.warn(`[SYNC] No image data found for visitor ${visitor.id}`);
+    return null; // 🔥 Skip syncing if image can't be loaded
+  }
+
+  // ✅ Use stored image name or fallback to generating one
+  const imageName =
+    visitor.visitorPhotoName ||
+    `visitor_${visitor.timestamp || Date.now()}.jpg`;
+
+  const photoObject = {
+    image_name: imageName,
+    image_base64: base64Data,
+  };
+
+  return {
+    visitor_name: visitor.visitorName,
+    photo: photoObject,
+    visitor_mobile_no: visitor.visitorMobileNo,
+    visiting_tenant_id: visitor.visitingTenantId,
+    uuid: visitor.recordUuid,
+  };
 };
+
+/**
+ * Syncs a single visitor record
+//  */
+// const syncVisitor = async (visitor: Visitor): Promise<boolean> => {
+//   try {
+//     console.log(
+//       `[SYNC] Attempting to sync visitor record with local ID: ${visitor.id}`
+//     );
+//     let base64Data = "";
+
+//     // Read image from file
+//     if (visitor.visitorPhoto) {
+//       const fileInfo = await FileSystem.getInfoAsync(visitor.visitorPhoto);
+//       if (fileInfo.exists) {
+//         base64Data = await FileSystem.readAsStringAsync(visitor.visitorPhoto, {
+//           encoding: FileSystem.EncodingType.Base64,
+//         });
+//         // console.log(
+//         //   `[SYNC] Read image for visitor ${visitor.id} from ${visitor.visitorPhoto}`
+//         // );
+//       } else {
+//         // console.warn(
+//         //   `[SYNC] Image file not found for visitor ${visitor.id} at ${visitor.visitorPhoto}`
+//         // );
+//       }
+//     }
+
+//     // Generate image name
+//     const imageName = `visitor_${visitor.timestamp || Date.now()}.jpg`;
+
+//     const photoObject = {
+//       image_name: imageName,
+//       image_base64: base64Data,
+//     };
+
+//     // Submit to API
+//     console.log(
+//       `[SYNC] Submitting visitor ${visitor.id} to API with payload:`,
+//       {
+//         visitor_name: visitor.visitorName,
+//         photo: {
+//           image_name: photoObject.image_name,
+//           image_base64_length: photoObject.image_base64.length,
+//         },
+//         visitor_mobile_no: visitor.visitorMobileNo,
+//         visiting_tenant_id: visitor.visitingTenantId,
+//       }
+//     );
+
+//     const response = await axiosInstance.post(API_ENDPOINT, {
+//       visitor_name: visitor.visitorName,
+//       photo: photoObject,
+//       visitor_mobile_no: visitor.visitorMobileNo,
+//       visiting_tenant_id: visitor.visitingTenantId,
+//       //timestamp: visitor.timestamp,
+//     });
+
+//     console.log(
+//       `[SYNC] API response for visitor ${visitor.id}:`,
+//       response.data
+//     );
+//     const filePath = visitor.visitorPhoto;
+
+//     // Update the record and clean up
+//     await database.write(async () => {
+//       await visitor.update((v: Visitor) => {
+//         v.isSynced = true;
+//         v.serverId = response.data.id || null;
+//         v.visitorPhoto = "";
+//       });
+//     });
+//     console.log(`[SYNC] Visitor ${visitor.id} synced successfully.`);
+//     if (filePath) {
+//       try {
+//         await FileSystem.deleteAsync(filePath, { idempotent: true });
+//         // console.log(
+//         //   `[SYNC] Deleted local image file for visitor ${visitor.id} at ${filePath}`
+//         // );
+//       } catch (err) {
+//         console.error(
+//           `[SYNC] Failed to delete local image file for visitor ${visitor.id}`,
+//           err
+//         );
+//       }
+//     }
+
+//     return true;
+//   } catch (error) {
+//     console.error("Sync failed for visitor", visitor.id, error);
+//     return false;
+//   }
+// };
 
 /**
  * Syncs all unsynced visitor records with the API.
@@ -350,7 +511,7 @@ export const syncVisitors = async (): Promise<{
     // Query unsynced visitor records
     const unsyncedVisitors = await database
       .get<Visitor>("visitors")
-      .query(Q.where("is_synced", false))
+      .query(Q.where("visitor_sync_status", "not_synced"))
       .fetch();
 
     if (unsyncedVisitors.length === 0) {
@@ -366,12 +527,86 @@ export const syncVisitors = async (): Promise<{
     const BATCH_SIZE = 5;
     for (let i = 0; i < unsyncedVisitors.length; i += BATCH_SIZE) {
       const batch = unsyncedVisitors.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map((visitor) => syncVisitor(visitor))
-      );
 
-      results.forEach((result) => {
-        if (result) syncedCount++;
+      // Process each visitor individually
+      const syncPromises = batch.map(async (visitor) => {
+        try {
+          const visitorData = await prepareVisitorForSync(visitor);
+          if (!visitorData) {
+            console.warn(
+              `[SYNC] Skipping visitor ${visitor.id} due to invalid payload`
+            );
+            return false;
+          }
+
+          console.log(
+            `[SYNC] Sending visitor ${visitor.recordUuid} with data:`,
+            {
+              ...visitorData,
+              base64Length: visitorData.photo?.image_base64?.length,
+            }
+          );
+
+          // Send to API
+          const response = await axiosInstance.post(API_ENDPOINT, visitorData);
+
+          // Check if UUID was processed successfully
+          if (
+            response.data &&
+            Array.isArray(response.data.processed_uuids) &&
+            response.data.processed_uuids.includes(visitor.recordUuid)
+          ) {
+            // Update the record
+            await database.write(async () => {
+              await visitor.update((v: Visitor) => {
+                v.visitorSyncStatus = "synced";
+              });
+            });
+            return true;
+          } else if (response.data && response.data.errors) {
+            console.warn(
+              `Error syncing visitor ${visitor.recordUuid}:`,
+              response.data.errors
+            );
+            return false;
+          }
+          return false;
+        } catch (error: any) {
+          const axiosError = error as {
+            response?: { data?: any; status?: number };
+            message: string;
+          };
+          const errors = axiosError.response?.data?.errors;
+
+          if (Array.isArray(errors)) {
+            errors.forEach((err: any) => {
+              // If err.error is a string, show that; otherwise stringify the entire object
+              const msg =
+                typeof err.error === "string"
+                  ? err.error
+                  : JSON.stringify(err, null, 2);
+
+              console.error(
+                `[SYNC ERROR] Visitor ${err.uuid || visitor.recordUuid}: ${msg}`
+              );
+            });
+          } else {
+            // Nothing in response.data.errors, fall back to raw body or message
+            console.error(
+              `[SYNC ERROR] Visitor ${visitor.recordUuid}:`,
+              axiosError.response?.data ?? axiosError.message
+            );
+          }
+          return false;
+        }
+      });
+
+      // Wait for all sync operations to complete
+      const results = await Promise.all(syncPromises);
+
+      // Count successes and failures
+      results.forEach((success) => {
+        if (success) syncedCount++;
         else failedCount++;
       });
 
@@ -458,17 +693,23 @@ export const cleanupOldImages = async (): Promise<void> => {
  * Purges old synced visitor records to prevent database bloat
  * Keeps records for the specified number of days
  */
-export const purgeOldRecords = async (keepDays = 30): Promise<number> => {
+export const purgeOldRecords = async (): Promise<number> => {
   try {
-    const cutoffTime = Date.now() - keepDays * 24 * 60 * 60 * 1000;
+    // Calculate the start of the current day
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
 
-    // Find old synced records
+    // Find old synced records (records from previous days that are synced)
     const oldRecords = await database
       .get<Visitor>("visitors")
       .query(
         Q.and(
-          Q.where("is_synced", true),
-          Q.where("timestamp", Q.lt(cutoffTime))
+          Q.where("visitor_sync_status", "synced"), // Changed from is_synced to sync_status
+          Q.where("timestamp", Q.lt(startOfToday))
         )
       )
       .fetch();

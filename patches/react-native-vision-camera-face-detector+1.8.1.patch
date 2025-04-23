@@ -1,0 +1,111 @@
+diff --git a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorOrientation.kt b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorOrientation.kt
+index b979a38..deb9935 100644
+--- a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorOrientation.kt
++++ b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorOrientation.kt
+@@ -5,39 +5,51 @@ import android.view.OrientationEventListener
+ import android.view.Surface
+ 
+ class VisionCameraFaceDetectorOrientation(private val context: Context) {
++  companion object {
+     var orientation = Surface.ROTATION_0
+-    private val orientationListener = object : OrientationEventListener(context) {
++    private var orientationListener: OrientationEventListener? = null
++
++    private fun degreesToSurfaceRotation(degrees: Int): Int =
++      when (degrees) {
++        in 45..135 -> Surface.ROTATION_270
++        in 135..225 -> Surface.ROTATION_180
++        in 225..315 -> Surface.ROTATION_90
++        else -> Surface.ROTATION_0
++      }
++  }
++
++  init {
++    if (orientationListener == null) {
++      orientationListener = object : OrientationEventListener(context) {
+         override fun onOrientationChanged(rotationDegrees: Int) {
+-            orientation = degreesToSurfaceRotation(rotationDegrees)
++          orientation = degreesToSurfaceRotation(rotationDegrees)
+         }
++      }
+     }
+ 
+-    init {
+-        orientation = Surface.ROTATION_0
+-        startDeviceOrientationListener()
+-    }
++    orientation = Surface.ROTATION_0
+ 
+-    protected fun finalize() {
+-        stopDeviceOrientationListener()
+-    }
++    startDeviceOrientationListener()
++  }
+ 
+-    private fun startDeviceOrientationListener() {
+-        stopDeviceOrientationListener()
++  protected fun finalize() {
++    stopDeviceOrientationListener()
++  }
+ 
+-        if(orientationListener.canDetectOrientation()) {
+-            orientationListener.enable()
+-        }
+-    }
++  private fun startDeviceOrientationListener() {
++    stopDeviceOrientationListener()
+ 
+-    private fun stopDeviceOrientationListener() {
+-        orientationListener.disable()
++    if (orientationListener != null && orientationListener!!.canDetectOrientation()) {
++      println("Starting device orientation listener")
++      orientationListener!!.enable()
+     }
++  }
+ 
+-    private fun degreesToSurfaceRotation(degrees: Int): Int =
+-        when (degrees) {
+-            in 45..135 -> Surface.ROTATION_270
+-            in 135..225 -> Surface.ROTATION_180
+-            in 225..315 -> Surface.ROTATION_90
+-            else -> Surface.ROTATION_0
+-        }
++  private fun stopDeviceOrientationListener() {
++    if (orientationListener != null) {
++      println("Stop device orientation listener")
++
++      orientationListener!!.disable()
++    }
++  }
+ }
+diff --git a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorPlugin.kt b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorPlugin.kt
+index c4d74bc..219b888 100644
+--- a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorPlugin.kt
++++ b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/visioncamerafacedetector/VisionCameraFaceDetectorPlugin.kt
+@@ -110,7 +110,7 @@ class VisionCameraFaceDetectorPlugin(
+ 
+     // using front camera
+     if(cameraFacing == Position.FRONT) {
+-      when (orientationManager.orientation) {
++      when (VisionCameraFaceDetectorOrientation.orientation) {
+         // device is portrait
+         Surface.ROTATION_0 -> {
+           bounds["x"] = ((-x * scaleX) + sourceWidth * scaleX) - width
+@@ -136,7 +136,7 @@ class VisionCameraFaceDetectorPlugin(
+     }
+ 
+     // using back camera
+-    when (orientationManager.orientation) {
++    when (VisionCameraFaceDetectorOrientation.orientation) {
+       // device is portrait
+       Surface.ROTATION_0 -> {
+         bounds["x"] = x * scaleX
+@@ -268,7 +268,7 @@ class VisionCameraFaceDetectorPlugin(
+   }
+ 
+   private fun getImageOrientation(): Int {
+-    return when (orientationManager.orientation) {
++    return when (VisionCameraFaceDetectorOrientation.orientation) {
+       // device is portrait
+       Surface.ROTATION_0 -> if(cameraFacing == Position.FRONT) 270 else 90
+       // device is landscape right

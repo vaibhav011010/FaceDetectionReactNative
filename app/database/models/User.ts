@@ -15,4 +15,5 @@ export default class User extends Model {
   @field("refresh_token") refreshToken!: string;
   @field("is_logged_in") isLoggedIn!: boolean;
   @field("is_first_login") isFirstLogin!: boolean; // Add this field
+  @field("needs_password_change") needsPasswordChange!: boolean; // Add this new field
 }

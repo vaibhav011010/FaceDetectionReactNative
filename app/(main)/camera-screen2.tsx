@@ -39,6 +39,10 @@ import { AppDispatch, RootState } from "../store";
 import { useDispatch, useSelector } from "react-redux";
 import { convertPhotoToBase64 } from "@/src/utility/photoConvertor";
 import { submitVisitor } from "../api/visitorForm";
+import NextSvg from "@/src/utility/nextSvg";
+import StarIcon from "@/src/utility/starIcon";
+import CameraIcon from "@/src/utility/CameraSvg";
+import ThankYou from "@/src/utility/ThankyouIcon";
 
 const { width, height } = Dimensions.get("window");
 const isTablet = width >= 768;
@@ -57,6 +61,7 @@ const FaceDetectionCamera: React.FC = () => {
   const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
     null
   );
+  const scaleAnim = useRef(new Animated.Value(1)).current;
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -66,6 +71,7 @@ const FaceDetectionCamera: React.FC = () => {
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [isFaceDetected, setIsFaceDetected] = useState<boolean>(false);
   const [isProcessingFrame, setIsProcessingFrame] = useState<boolean>(false);
+
   const [showCaptureIndicator, setShowCaptureIndicator] =
     useState<boolean>(false);
 
@@ -77,7 +83,27 @@ const FaceDetectionCamera: React.FC = () => {
   const captureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processingLock = useRef<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const { detectFaces } = useFaceDetector();
+  const steadyFaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isCaptureAgainDisabled, setIsCaptureAgainDisabled] = useState(false);
+
+  const { detectFaces } = useFaceDetector({
+    performanceMode: "fast",
+    landmarkMode: "all",
+  });
+  const animateCountdown = () => {
+    Animated.sequence([
+      Animated.timing(scaleAnim, {
+        toValue: 1.5,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
 
   // Camera setup
   const device = useCameraDevice("front");
@@ -106,22 +132,68 @@ const FaceDetectionCamera: React.FC = () => {
     (faces: Face[]) => {
       if (hasTakenPhotoRef.current || isTakingPicture) return;
 
-      const facePresent = faces.length > 0;
-
-      // Only update state if it's different to reduce rerenders
-      if (facePresent !== isFaceDetected) {
-        setIsFaceDetected(facePresent);
+      // Debug: Log the first face structure if available
+      if (faces.length > 0) {
+        console.log(
+          "Face detected, data:",
+          JSON.stringify({
+            hasLeftEye: !!faces[0].landmarks?.LEFT_EYE,
+            hasRightEye: !!faces[0].landmarks?.RIGHT_EYE,
+            leftEyeOpen: faces[0].leftEyeOpenProbability,
+            rightEyeOpen: faces[0].rightEyeOpenProbability,
+            bounds: faces[0].bounds,
+            width: width,
+            height: height,
+          })
+        );
       }
 
-      // Handle face detection timeout
-      if (facePresent && !photoTimeoutRef.current) {
+      // Simplify validation - just check if we have a face with reasonable size
+      const validFace =
+        faces.length > 0 &&
+        faces.some((face) => {
+          const faceWidth = face.bounds.width;
+          const faceHeight = face.bounds.height;
+
+          // Calculate the visible camera frame area
+          const visibleHeight = height * 0.55; // 55% of screen height
+          const visibleMinY = (height - visibleHeight) / 2; // Assuming centered
+          const visibleMaxY = visibleMinY + visibleHeight;
+
+          // Check if face is mostly within the visible frame
+          const faceY = face.bounds.y;
+          const faceBottomY = faceY + faceHeight;
+          const faceInView =
+            faceBottomY > visibleMinY &&
+            faceY < visibleMaxY &&
+            // At least 70% of face height should be in visible area
+            Math.min(faceBottomY, visibleMaxY) - Math.max(faceY, visibleMinY) >
+              faceHeight * 0.7;
+
+          // Face should be at least 15% of visible area width/height for better validation
+          const minFaceSize = Math.min(width, visibleHeight) * 0.15;
+
+          return (
+            faceWidth > minFaceSize && faceHeight > minFaceSize && faceInView
+          );
+        });
+      // Update state only if detection status changed
+      if (validFace !== isFaceDetected) {
+        setIsFaceDetected(validFace);
+        console.log(
+          validFace ? "Face properly detected!" : "No valid face detected"
+        );
+      }
+
+      // Handle photo capture with debounce
+      if (validFace && !photoTimeoutRef.current) {
         photoTimeoutRef.current = setTimeout(() => {
           if (!hasTakenPhotoRef.current && !isTakingPicture) {
             takePicture();
           }
           photoTimeoutRef.current = null;
-        }, 300);
-      } else if (!facePresent && photoTimeoutRef.current) {
+        }, 200); // Slightly shorter delay
+      } else if (!validFace && photoTimeoutRef.current) {
         clearTimeout(photoTimeoutRef.current);
         photoTimeoutRef.current = null;
       }
@@ -143,9 +215,15 @@ const FaceDetectionCamera: React.FC = () => {
 
     try {
       const faces = detectFaces(frame);
-      onFaceDetectedJS(faces);
+      // This makes face disappearance detection much faster
+      if (faces.length === 0) {
+        onFaceDetectedJS([]);
+      } else {
+        onFaceDetectedJS(faces);
+      }
     } catch (e) {
       // Silent catch to prevent crashes
+      onFaceDetectedJS([]);
     } finally {
       processingLock.current = false;
     }
@@ -174,6 +252,7 @@ const FaceDetectionCamera: React.FC = () => {
     if (countdown > 0) {
       timeoutRef.current = setTimeout(() => {
         setCountdown(countdown - 1);
+        animateCountdown(); // Trigger animation every time the countdown changes
       }, 1000);
     } else if (countdown === 0) {
       setShowCamera(true);
@@ -228,7 +307,7 @@ const FaceDetectionCamera: React.FC = () => {
       setShowCaptureIndicator(true);
 
       // Short delay for visual feedback
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
       const photo: PhotoFile = await cameraRef.current.takePhoto({
         flash: "off",
@@ -257,15 +336,19 @@ const FaceDetectionCamera: React.FC = () => {
 
   // Safely reset to capture again - improved for reliability
   const captureAgain = useCallback((): void => {
+    if (isCaptureAgainDisabled) return;
     // Reset state in the correct order
     setCapturedPhoto(null);
+
+    setIsCaptureAgainDisabled(true);
 
     // Small delay to ensure clean state before reactivating detection
     setTimeout(() => {
       hasTakenPhotoRef.current = false;
       setIsFaceDetected(false);
+      setIsCaptureAgainDisabled(false); // Re-enable the button after delay
       processingLock.current = false;
-    }, 200);
+    }, 300);
   }, []);
 
   const convertAndSubmit = async () => {
@@ -278,6 +361,7 @@ const FaceDetectionCamera: React.FC = () => {
     try {
       setShowConfirmModal(false);
 
+      // Prepare base64
       let base64String = capturedPhotoBase64;
       if (!base64String) {
         const result = await convertPhotoToBase64(capturedPhoto);
@@ -292,25 +376,24 @@ const FaceDetectionCamera: React.FC = () => {
         base64String
       );
 
-      // Important: Reset states BEFORE navigation
-      resetStates(result.success);
+      // Reset the form state no matter what
+      resetStates(true); // always reset UI inputs
 
-      if (result.success) {
-        // Show thank you modal
+      // Detect “offline stored” and treat it as success
+      const offlineStored =
+        !result.success && result.error?.includes("stored locally");
+
+      if (result.success || offlineStored) {
+        // Show thank you (even offline)
         setShowThankYouModal(true);
-
-        // Clear camera-related states
-
         setCapturedPhoto(null);
 
-        // Navigate after a delay, but ensure we don't process anything else
         setTimeout(() => {
           setShowThankYouModal(false);
-          // For React Navigation, use the correct syntax
           router.replace("/checkin-screen");
         }, 2000);
       } else {
-        // Immediate navigation on failure
+        // A genuine failure—just navigate back so they can try again
         router.replace("/checkin-screen");
       }
     } catch (error) {
@@ -322,6 +405,7 @@ const FaceDetectionCamera: React.FC = () => {
       setIsLoading(false);
     }
   };
+
   // Handle cancel
   const handleCancel = () => {
     setShowCancelModal(true);
@@ -370,7 +454,20 @@ const FaceDetectionCamera: React.FC = () => {
         {hasPermission === null ? (
           <ActivityIndicator size="large" color="#0000ff" />
         ) : (
-          <Text style={styles.countdownText}>{countdown}</Text>
+          <View style={styles.countdownOverlay}>
+            <Text style={styles.countdownTitle}>Getting Ready</Text>
+            <Text style={styles.countdownInstructions}>
+              Please prepare to position your face
+            </Text>
+            <Animated.Text
+              style={[
+                styles.initialCountdownText,
+                { transform: [{ scale: scaleAnim }] },
+              ]}
+            >
+              {countdown}
+            </Animated.Text>
+          </View>
         )}
       </View>
     );
@@ -421,6 +518,8 @@ const FaceDetectionCamera: React.FC = () => {
                       ref={cameraRef}
                       style={styles.camera}
                       device={device}
+                      photoQualityBalance="speed"
+                      preview={true}
                       isActive={!capturedPhoto && showCamera}
                       pixelFormat="yuv"
                       photo={true}
@@ -430,7 +529,7 @@ const FaceDetectionCamera: React.FC = () => {
                     />
 
                     {/* Face detection overlay */}
-                    {isFaceDetected && (
+                    {isFaceDetected ? (
                       // <View style={styles.holdSteadyContainer}>
                       <View
                         style={[
@@ -447,7 +546,13 @@ const FaceDetectionCamera: React.FC = () => {
                       >
                         <Text style={styles.holdSteadyText}>Hold Steady</Text>
                       </View>
+                    ) : (
                       // </View>
+                      <View style={styles.noFaceDetectedBanner}>
+                        <Text style={styles.noFaceDetectedText}>
+                          No Face Detected
+                        </Text>
+                      </View>
                     )}
 
                     {/* Camera flash effect overlay */}
@@ -456,12 +561,12 @@ const FaceDetectionCamera: React.FC = () => {
                     )} */}
 
                     {/* Taking photo indicator */}
-                    {isTakingPicture && (
+                    {/* {isTakingPicture && (
                       <View style={styles.takingPhotoIndicator}>
                         <ActivityIndicator size="large" color="#fafafa" />
                         <Text style={styles.savingText}>Saving photo...</Text>
                       </View>
-                    )}
+                    )} */}
                   </View>
                 </View>
               ) : (
@@ -504,7 +609,8 @@ const FaceDetectionCamera: React.FC = () => {
                       onPress={handleCancel}
                     >
                       {/* <View style={styles.buttonContent}>  */}
-                      <Ionicons name="close-circle" size={22} color="#03045E" />
+                      {/* <Ionicons name="close-circle" size={22} color="#03045E" /> */}
+                      <StarIcon />
                       <Text style={styles.cancelButtonText}>Cancel</Text>
                       {/* </View> */}
                     </TouchableOpacity>
@@ -529,11 +635,12 @@ const FaceDetectionCamera: React.FC = () => {
                         //   <View style={styles.buttonContent}>
                         <>
                           <Text style={styles.submitButtonText}>Submit</Text>
-                          <Ionicons
+                          {/* <Ionicons
                             name="checkmark-circle"
                             size={22}
                             color="#fafafa"
-                          />
+                          /> */}
+                          <NextSvg />
                         </>
                         //   </View>
                       )}
@@ -545,9 +652,11 @@ const FaceDetectionCamera: React.FC = () => {
                     <TouchableOpacity
                       style={styles.captureAgainButton}
                       onPress={captureAgain}
+                      disabled={isCaptureAgainDisabled}
                     >
                       <View style={styles.captureAgainContent}>
-                        <Ionicons name="camera" size={22} color="#fafafa" />
+                        {/* <Ionicons name="camera" size={22} color="#fafafa" /> */}
+                        <CameraIcon />
                         <Text style={styles.captureAgainText}>
                           Capture Again
                         </Text>
@@ -644,11 +753,12 @@ const FaceDetectionCamera: React.FC = () => {
           animationType="slide" // Slide in animation
         >
           <View style={styles.fullScreenModal}>
-            <Image
+            {/* <Image
               source={require("../../assets/thankyou.png")} // Replace with your image source
               style={styles.fullScreenImage}
               resizeMode="cover"
-            />
+            /> */}
+            <ThankYou />
           </View>
         </Modal>
       </Animated.View>
@@ -992,6 +1102,57 @@ const styles = StyleSheet.create({
     color: "#03045E",
     textAlign: "center",
     fontFamily: "OpenSans_Condensed-Regular",
+  },
+  countdownOverlay: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#EEF2F6",
+  },
+  countdownTitle: {
+    fontSize: 30,
+    fontFamily: "OpenSans_Condensed-Bold",
+    color: "#03045E",
+    marginBottom: 10,
+  },
+  countdownInstructions: {
+    fontSize: 18,
+    color: "#333",
+    marginBottom: 30,
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  initialCountdownText: {
+    fontSize: 80,
+    fontFamily: "OpenSans_Condensed-Bold",
+    color: "#03045E",
+  },
+  captureCountdownText: {
+    fontSize: 18,
+    color: "#fff",
+    marginTop: 10,
+  },
+  noFaceDetectedBanner: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255, 0, 0, 0.3)", // Semi-transparent red overlay
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  noFaceDetectedText: {
+    color: "white",
+    fontSize: 15,
+    fontFamily: "OpenSans_Condensed-Bold",
+    textAlign: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
   },
 });
 

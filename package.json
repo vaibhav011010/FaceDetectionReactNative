@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "prebuild": "EXPO_ROUTER_APP_ROOT=./app",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.4",
@@ -26,6 +27,7 @@
     "expo": "~52.0.37",
     "expo-build-properties": "~0.13.2",
     "expo-constants": "~17.0.7",
+    "expo-crypto": "~14.0.2",
     "expo-dev-client": "~5.0.14",
     "expo-file-system": "~18.0.11",
     "expo-font": "~13.0.4",
@@ -39,8 +41,10 @@
     "lodash.debounce": "^4.0.8",
     "react": "18.3.1",
     "react-native": "0.76.7",
+    "react-native-background-timer": "^2.4.1",
     "react-native-dropdown-picker": "^5.4.6",
     "react-native-fs": "^2.20.0",
+    "react-native-get-random-values": "^1.11.0",
     "react-native-linear-gradient": "^2.8.3",
     "react-native-paper": "^5.13.1",
     "react-native-performance": "^5.1.2",
@@ -52,7 +56,8 @@
     "react-native-vision-camera": "^4.6.4",
     "react-native-vision-camera-face-detector": "^1.8.1",
     "react-native-worklets-core": "^1.5.0",
-    "react-redux": "^9.2.0"
+    "react-redux": "^9.2.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -65,6 +70,7 @@
     "@types/react-native": "^0.73.0",
     "babel-plugin-transform-inline-environment-variables": "^0.4.4",
     "metro-react-native-babel-preset": "^0.77.0",
+    "patch-package": "^8.0.0",
     "typescript": "^5.3.3"
   },
   "resolutions": {

@@ -44,6 +44,8 @@ import { login } from "../api/auth";
 import User from "../database/models/User";
 import database from "../database";
 import { Q } from "@nozbe/watermelondb";
+import { triggerLoginSync } from "../api/visitorForm";
+import { debounce } from "lodash";
 
 interface LoginFormProps {
   onLogin?: (email: string, password: string) => void;
@@ -134,6 +136,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         permission,
       } = response;
 
+      const needsPasswordChange = user_detail.change_password === false;
+
       // Determine if this is a first login based on database check
       let isFirstLogin = false;
 
@@ -153,7 +157,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
 
         if (existing.length > 0) {
           // User exists in the database
-          isFirstLogin = existing[0].isFirstLogin === true; // Get existing value
+          //   isFirstLogin = existing[0].isFirstLogin === true; // Get existing value
 
           await existing[0].update((user) => {
             user.accessToken = access;
@@ -165,11 +169,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             user.roleName = role_detail.role_name;
             user.permissions = JSON.stringify(permission);
             user.isLoggedIn = true;
+            user.needsPasswordChange = user_detail.change_password === true;
             // We're not changing isFirstLogin here, maintaining its value
           });
         } else {
           // New user in our database, consider this a first login
-          isFirstLogin = true;
+          //  isFirstLogin = true;
 
           await userCollection.create((user) => {
             user.userId = user_detail.id;
@@ -182,7 +187,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             user.accessToken = access;
             user.refreshToken = refresh;
             user.isLoggedIn = true;
-            user.isFirstLogin = true; // Set first login flag for new users
+            user.needsPasswordChange = user_detail.change_password === true; // the value
+            //   user.isFirstLogin = true; // Set first login flag for new users
           });
         }
       });
@@ -195,7 +201,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         roleId: role_detail.id,
         roleName: role_detail.role_name,
         permissions: permission,
-        isFirstLogin: isFirstLogin,
+        //  isFirstLogin: isFirstLogin,
+        needsPasswordChange: needsPasswordChange, // Add this to your user object
       };
 
       console.log("Constructed user object:", user);
@@ -211,14 +218,23 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       dispatch(setCorporateParkName(corporate_park_detail.corporate_park_name));
       console.log("Corporate park name dispatched to global store");
       console.log("loginSuccess dispatched");
+      try {
+        const syncResult = await triggerLoginSync();
+        console.log("Login sync completed:", syncResult);
+      } catch (syncError) {
+        console.error("Login sync error:", syncError);
+        // Consider if you want to show an alert for sync errors
+        // You might want to handle this silently since login was successful
+        console.log(
+          "🛢Login successful but data sync failed. Some features may not work properly.🛢"
+        );
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
 
       // Check if this is a first login and redirect accordingly
-      if (isFirstLogin) {
-        console.log(
-          "First time login detected, redirecting to change password"
-        );
+      if (needsPasswordChange) {
+        console.log("Password change required, redirecting to change password");
         router.replace("/change-password-screen");
       } else {
         console.log("Normal login, redirecting to main app");
@@ -294,6 +310,17 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       dispatch(loginFailure(detailedError));
     }
   };
+
+  // // Start sync process
+  // console.log('Triggering sync after login');
+  // triggerLoginSync()
+  //   .then(result => {
+  //     console.log('Login sync completed:', result);
+  //   })
+  //   .catch(error => {
+  //     console.error('Login sync error:', error);
+  //   });
+
   // const handleLogin = async (): Promise<void> => {
   //   console.log("handleLogin called");
   //   // router.replace("/camera-screen2");
@@ -700,7 +727,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
               style={styles.forgotPasswordContainer}
               onPress={handleForgotPassword}
             >
-              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              <Text style={styles.forgotPasswordText}>Forgot Password</Text>
             </TouchableOpacity>
 
             {/* Login Button with Gradient */}

@@ -158,22 +158,33 @@ const ChangePasswordScreen = () => {
       setIsPasswordValid(true);
     }
   };
-
   const validateOldPassword = (password: string): void => {
-    const passwordRegex =
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    console.log("Validating password:", password); // Add this for debugging
 
-    if (!oldPassword) {
-      setOldPasswordError("current Password is required");
+    // More permissive regex that accepts common special characters
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{8,}$/;
+
+    if (!password) {
+      console.log("Password empty");
+      setOldPasswordError("Current Password is required");
       setIsOldPasswordValid(false);
-    } else if (!passwordRegex.test(password)) {
+      return;
+    }
+
+    const isValid = passwordRegex.test(password);
+    console.log("Password valid?", isValid); // Add this for debugging
+
+    if (isValid) {
+      console.log("Setting valid state");
+      setOldPasswordError(null);
+      setIsOldPasswordValid(true);
+    } else {
+      console.log("Setting invalid state");
       setOldPasswordError(
         "Password must be at least 8 characters long, with one uppercase letter, one lowercase letter, one number, and one special character."
       );
       setIsOldPasswordValid(false);
-    } else {
-      setOldPasswordError(null);
-      setIsOldPasswordValid(true);
     }
   };
 
@@ -207,7 +218,7 @@ const ChangePasswordScreen = () => {
               />
             </View>
 
-            <Text style={styles.welcomeText}>Forget Password</Text>
+            <Text style={styles.welcomeText}>Change Password</Text>
 
             {/* Old Password Input */}
             {/* <View style={styles.inputContainer}>
@@ -226,7 +237,12 @@ const ChangePasswordScreen = () => {
               />
             </View> */}
 
-            <View style={styles.inputContainer}>
+            <View
+              style={[
+                styles.inputContainer,
+                OldPasswordError ? { marginBottom: 30 } : null, // Add extra margin when error is shown
+              ]}
+            >
               <PaperTextInput
                 label={
                   <Text
@@ -284,6 +300,7 @@ const ChangePasswordScreen = () => {
                     color: "red",
                     fontSize: responsiveFontSize - 2,
                     marginLeft: 5,
+                    marginBottom: 15,
                     fontFamily: "OpenSans_Condensed-Regular",
                   }}
                 >
@@ -308,7 +325,12 @@ const ChangePasswordScreen = () => {
                 }
               />
             </View> */}
-            <View style={styles.inputContainer}>
+            <View
+              style={[
+                styles.inputContainer,
+                passwordError ? { marginBottom: 30 } : null, // Add extra margin when error is shown
+              ]}
+            >
               <PaperTextInput
                 label={
                   <Text

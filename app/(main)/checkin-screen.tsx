@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useContext } from "react";
 import {
   View,
   Text,
@@ -11,21 +11,29 @@ import {
   useWindowDimensions,
   Platform,
   Animated,
+  Alert,
 } from "react-native";
 import { useSelector } from "react-redux";
 import { useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import { RootState } from "../store";
+import { Svg, Circle, Path, G } from "react-native-svg";
+import { LoginContext } from "../context/LoginContext";
+import NetInfo from "@react-native-community/netinfo";
+import UserProfileIcon from "@/src/utility/UserSvg";
+
 const windowWidth = Dimensions.get("window").width;
 const { width, height } = Dimensions.get("window");
 
 export const isTablet = width >= 768;
 
 export default function CheckinScreen() {
+  // const { handleLogout } = useContext(LoginContext);
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const [transitioning, setTransitioning] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const responsiveFontSize = 16 / fontScale;
   const windowWidth = Dimensions.get("window").width;
@@ -76,9 +84,73 @@ export default function CheckinScreen() {
       </View>
     );
   }
+  // // Power Button Component
+  // const PowerButton: React.FC<{ onPress: () => void }> = ({ onPress }) => (
+  //   <TouchableOpacity style={styles.powerButton} onPress={onPress}>
+  //     <Svg width="30" height="30" viewBox="0 0 24 24">
+  //       <G
+  //         fill="none"
+  //         stroke="#03045E"
+  //         strokeWidth="2"
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //       >
+  //         <Circle cx="12" cy="12" r="10" fill="#03045E" />
+  //         <Path d="M12 6v6" stroke="#FFFFFF" />
+  //         <Path d="M8 9a5 5 0 1 0 8 0" stroke="#FFFFFF" />
+  //       </G>
+  //     </Svg>
+  //   </TouchableOpacity>
+  // );
+  // const handlePowerPress = () => {
+  //   Alert.alert("Logout", "Are you sure you want to logout?", [
+  //     { text: "Cancel", style: "cancel" },
+  //     {
+  //       text: "Logout",
+  //       style: "destructive",
+  //       onPress: async () => {
+  //         setIsLoading(true);
 
+  //         try {
+  //           const result = await handleLogout();
+
+  //           if (result.success) {
+  //             // If we’re offline, let them know we’ll sync later
+  //             const { isConnected } = await NetInfo.fetch();
+  //             if (!isConnected) {
+  //               Alert.alert(
+  //                 "Offline Logout",
+  //                 "You’re offline right now. Your logout has been completed locally and will be propagated to the server once you’re back online."
+  //               );
+  //             }
+
+  //             // Navigate to login screen regardless
+  //             router.replace("/login");
+  //           } else {
+  //             // Show any logout-specific error returned
+  //             Alert.alert(
+  //               "Logout Failed",
+  //               result.error || "Logout failed. Please try again."
+  //             );
+  //           }
+  //         } catch (error) {
+  //           // This should rarely happen, since handleLogout never throws
+  //           console.error("Unexpected logout error:", error);
+  //           Alert.alert(
+  //             "Logout Failed",
+  //             "An unexpected error occurred. Please try again."
+  //           );
+  //         } finally {
+  //           setIsLoading(false);
+  //         }
+  //       },
+  //     },
+  //   ]);
+  // };
   return (
     <View style={styles.wrapper}>
+      {/* Power Button positioned at top right */}
+      {/* <PowerButton onPress={handlePowerPress} /> */}
       <Animated.View
         style={[styles.screen, { transform: [{ translateX: currentSlide }] }]}
       >
@@ -115,10 +187,7 @@ export default function CheckinScreen() {
                   activeOpacity={0.8}
                   onPress={handleNewVisit}
                 >
-                  <Image
-                    source={require("../../assets/addUser.png")} // Update with your image path
-                    style={styles.buttonImage}
-                  />
+                  <UserProfileIcon />
                   <Text style={styles.buttonText}>Check In</Text>
                 </TouchableOpacity>
               </View>
@@ -126,6 +195,14 @@ export default function CheckinScreen() {
           </View>
         </View>
       </Animated.View>
+      {/* Full-screen loading overlay */}
+      {isLoading && (
+        <View style={styles.fullScreenLoader}>
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#03045E" />
+          </View>
+        </View>
+      )}
       {/* {transitioning && (
         <Animated.View
           style={[styles.newScreen, { transform: [{ translateX: nextSlide }] }]}
@@ -153,6 +230,13 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 24,
     marginBottom: 20,
+  },
+  // Add the power button style
+  powerButton: {
+    position: "absolute",
+    top: 50,
+    right: 35,
+    zIndex: 10,
   },
   newScreen: {
     // This new screen is styled similarly; you can modify as needed
@@ -249,5 +333,23 @@ const styles = StyleSheet.create({
     width: isTablet ? 28 : 22,
     height: isTablet ? 28 : 22,
     resizeMode: "contain",
+  },
+  // Add these new styles for the full-screen loader
+  fullScreenLoader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)", // Semi-transparent navy blue
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999, // Ensure it's above everything else
+  },
+  loaderContainer: {
+    padding: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

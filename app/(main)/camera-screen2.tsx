@@ -26,7 +26,8 @@ import {
   useFaceDetector,
   Face,
 } from "react-native-vision-camera-face-detector";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import FaceDetection from "@react-native-ml-kit/face-detection";
+
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, usePathname, useSegments } from "expo-router";
 import {
@@ -85,10 +86,11 @@ const FaceDetectionCamera: React.FC = () => {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const steadyFaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCaptureAgainDisabled, setIsCaptureAgainDisabled] = useState(false);
+  const [photoHasFace, setPhotoHasFace] = useState<boolean>(false);
+  const [isValidating, setIsValidating] = useState(false);
 
   const { detectFaces } = useFaceDetector({
     performanceMode: "fast",
-    landmarkMode: "all",
   });
   const animateCountdown = () => {
     Animated.sequence([
@@ -130,7 +132,13 @@ const FaceDetectionCamera: React.FC = () => {
   // Face detection callback - simplified and more reliable
   const onFaceDetected = useCallback(
     (faces: Face[]) => {
-      if (hasTakenPhotoRef.current || isTakingPicture) return;
+      if (
+        hasTakenPhotoRef.current ||
+        isTakingPicture ||
+        isCaptureAgainDisabled // <-- add this
+      ) {
+        return;
+      }
 
       // Debug: Log the first face structure if available
       if (faces.length > 0) {
@@ -198,7 +206,7 @@ const FaceDetectionCamera: React.FC = () => {
         photoTimeoutRef.current = null;
       }
     },
-    [isFaceDetected, isTakingPicture]
+    [isFaceDetected, isTakingPicture, isCaptureAgainDisabled]
   );
 
   // Create worklet functions
@@ -292,6 +300,27 @@ const FaceDetectionCamera: React.FC = () => {
     };
   }, []);
 
+  async function validateCapturedImage(uri: string): Promise<boolean> {
+    try {
+      const faces = await FaceDetection.detect(uri, {
+        performanceMode: "fast",
+        landmarkMode: "none",
+        classificationMode: "none",
+      });
+      if (!faces || faces.length === 0) {
+        Alert.alert(
+          "No face detected",
+          "Oops! We couldn’t detect a face in your photo. Please retake it with your face fully in view."
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("Error validating photo:", e);
+      Alert.alert("Error", "Unable to analyze the photo. Please try again.");
+      return false;
+    }
+  }
   // Take picture function with proper error handling
   const takePicture = useCallback(async (): Promise<void> => {
     if (!cameraRef.current || isTakingPicture || hasTakenPhotoRef.current) {
@@ -443,8 +472,32 @@ const FaceDetectionCamera: React.FC = () => {
     captureTimeoutRef.current = null;
     router.replace("/checkin-screen");
   };
-  const handleConfirmSubmit = () => {
-    convertAndSubmit();
+  const handleConfirmSubmit = async () => {
+    if (!capturedPhoto) {
+      Alert.alert("Error", "No photo to submit");
+      return;
+    }
+
+    // 1️⃣ Close modal so it’s not blocking
+    setShowConfirmModal(false);
+
+    // 2️⃣ Fade button to indicate “checking photo”
+    setIsValidating(true);
+
+    // 3️⃣ Run face-validation
+    const ok = await validateCapturedImage(capturedPhoto);
+
+    // 4️⃣ Always turn off the fade
+    setIsValidating(false);
+
+    if (!ok) {
+      // Validation failed: alert was shown & state reset inside helper
+      return;
+    }
+
+    // 5️⃣ Validation passed → now show spinner and submit
+    // convertAndSubmit() already flips isLoading internally
+    await convertAndSubmit();
   };
 
   // Loading or permission state
@@ -516,6 +569,7 @@ const FaceDetectionCamera: React.FC = () => {
                   <View style={styles.cameraFrame}>
                     <Camera
                       ref={cameraRef}
+                      zoom={0.5}
                       style={styles.camera}
                       device={device}
                       photoQualityBalance="speed"
@@ -625,6 +679,7 @@ const FaceDetectionCamera: React.FC = () => {
                           alignItems: "center",
                           justifyContent: "center",
                           gap: 10,
+                          opacity: isValidating ? 0.3 : 1,
                         },
                       ]}
                       onPress={() => setShowConfirmModal(true)}
@@ -635,11 +690,6 @@ const FaceDetectionCamera: React.FC = () => {
                         //   <View style={styles.buttonContent}>
                         <>
                           <Text style={styles.submitButtonText}>Submit</Text>
-                          {/* <Ionicons
-                            name="checkmark-circle"
-                            size={22}
-                            color="#fafafa"
-                          /> */}
                           <NextSvg />
                         </>
                         //   </View>
@@ -682,11 +732,7 @@ const FaceDetectionCamera: React.FC = () => {
           </View>
         )}
 
-        <Modal
-          visible={showConfirmModal}
-          transparent={true}
-          animationType="fade"
-        >
+        <Modal visible={showConfirmModal} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
               <View style={styles.modalHeader}>
@@ -697,19 +743,27 @@ const FaceDetectionCamera: React.FC = () => {
                   Are you sure you want to submit this photo?
                 </Text>
               </View>
+
               <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalCancelButton]}
-                  onPress={() => setShowConfirmModal(false)}
-                >
-                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalConfirmButton]}
-                  onPress={handleConfirmSubmit}
-                >
-                  <Text style={styles.modalConfirmButtonText}>Confirm</Text>
-                </TouchableOpacity>
+                {isValidating ? (
+                  // show spinner instead of buttons
+                  <ActivityIndicator size="large" color="#03045E" />
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalCancelButton]}
+                      onPress={() => setShowConfirmModal(false)}
+                    >
+                      <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalButton, styles.modalConfirmButton]}
+                      onPress={handleConfirmSubmit}
+                    >
+                      <Text style={styles.modalConfirmButtonText}>Confirm</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
             </View>
           </View>

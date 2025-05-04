@@ -8,6 +8,8 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { v4 as uuidv4 } from "uuid";
 import { AppState, AppStateStatus } from "react-native";
 import * as Crypto from "expo-crypto";
+import { getCurrentUserId } from "./auth";
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 
 // Use the relative endpoint as baseURL is set in axiosInstance
 const API_ENDPOINT = "/visitors/add_visitor/";
@@ -16,7 +18,7 @@ const VISITOR_IMAGES_DIR = `${FileSystem.documentDirectory}visitor_images`;
 // Timer reference for sync
 let syncIntervalId: ReturnType<typeof setInterval> | null = null;
 
-const SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+const SYNC_INTERVAL = 2 * 60 * 1000; // 15 minutes in milliseconds
 let appStateListener: any = null;
 
 // Ensure the directory exists
@@ -108,7 +110,7 @@ export const startPeriodicSync = () => {
 
   // Set up new interval
   syncIntervalId = setInterval(() => {
-    console.log("Running periodic sync (15-minute interval)");
+    console.log("Running periodic sync (2-minute interval)");
     syncVisitors();
   }, SYNC_INTERVAL);
 
@@ -128,9 +130,21 @@ export const startPeriodicSync = () => {
  */
 const handleAppStateChange = (nextAppState: AppStateStatus) => {
   if (nextAppState === "active") {
-    // App came to foreground, trigger a sync
-    console.log("App came to foreground, triggering sync");
-    syncVisitors();
+    // App came to foreground, check network then trigger sync
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) {
+        console.log("App came to foreground with network, triggering sync");
+        syncVisitors()
+          .then((result) => {
+            console.log("App foreground sync completed:", result);
+          })
+          .catch((error) => {
+            console.error("App foreground sync failed:", error);
+          });
+      } else {
+        console.log("App came to foreground but no network, skipping sync");
+      }
+    });
   }
 };
 
@@ -158,15 +172,26 @@ export const stopPeriodicSync = () => {
 export const triggerLoginSync = async () => {
   console.log("Security guard logged in, triggering sync");
 
-  // Run the sync
-  const result = await syncVisitors();
+  // Check network before running sync
+  const networkState = await NetInfo.fetch();
+  let result = { success: false, syncedCount: 0, failedCount: 0 };
 
-  // Start the periodic sync timer
+  if (networkState.isConnected) {
+    // Run the sync
+    result = await syncVisitors();
+    console.log("Login sync result:", result);
+  } else {
+    console.log(
+      "No network connection during login, sync will happen when connection is available"
+    );
+  }
+
+  // Start the periodic sync timer regardless of network status
+  // It will check network before each sync attempt
   startPeriodicSync();
 
   return result;
 };
-
 /**
  * Clean up and cancel sync timer on logout
  */
@@ -190,6 +215,7 @@ export const submitVisitor = async (
   warning?: string;
 }> => {
   try {
+    const currentUserId = await getCurrentUserId();
     // Compress the image first
     const compressedPhotoBase64 = await compressImage(visitorPhotoBase64);
 
@@ -219,13 +245,17 @@ export const submitVisitor = async (
     const imageFilePath = await saveImageToFile(compressedPhotoBase64);
 
     // Send to server
-    const response = await axiosInstance.post(API_ENDPOINT, {
-      visitor_name: visitorName,
-      photo: photoObject,
-      visitor_mobile_no: visitorMobileNo,
-      visiting_tenant_id: visitingTenantId,
-      uuid: recordUuid,
-    });
+    const response = await axiosInstance.post(
+      API_ENDPOINT,
+      {
+        visitor_name: visitorName,
+        photo: photoObject,
+        visitor_mobile_no: visitorMobileNo,
+        visiting_tenant_id: visitingTenantId,
+        uuid: recordUuid,
+      },
+      { metadata: { userId: currentUserId } }
+    );
     console.log("About to send API request with data:", {
       visitor_name: visitorName,
       visitor_mobile_no: visitorMobileNo,
@@ -262,6 +292,8 @@ export const submitVisitor = async (
           visitor.visitorPhoto = imageFilePath;
           console.log("Setting isSynced");
           // visitor.visitorPhotoName = imageName;
+          visitor.createdByUserId = currentUserId;
+
           console.log("Setting imageName");
           visitor.isSynced = true;
           console.log("Setting timestamp");
@@ -329,6 +361,7 @@ export const submitVisitor = async (
       try {
         const imageFilePath = await saveImageToFile(visitorPhotoBase64);
         const imageName = `visitor_${Date.now()}.jpg`;
+        const currentUserId = await getCurrentUserId();
 
         await database.write(async () => {
           await database.get<Visitor>("visitors").create((visitor) => {
@@ -340,6 +373,7 @@ export const submitVisitor = async (
             visitor.timestamp = Date.now();
             visitor.isSynced = false;
             visitor.recordUuid = Crypto.randomUUID();
+            visitor.createdByUserId = currentUserId;
             visitor.visitorSyncStatus = "not_synced";
           });
         });
@@ -508,10 +542,15 @@ export const syncVisitors = async (): Promise<{
   failedCount: number;
 }> => {
   try {
+    const currentUserId = await getCurrentUserId();
+
     // Query unsynced visitor records
     const unsyncedVisitors = await database
       .get<Visitor>("visitors")
-      .query(Q.where("visitor_sync_status", "not_synced"))
+      .query(
+        Q.where("visitor_sync_status", "not_synced"),
+        Q.where("created_by_user_id", currentUserId)
+      )
       .fetch();
 
     if (unsyncedVisitors.length === 0) {
@@ -530,6 +569,17 @@ export const syncVisitors = async (): Promise<{
 
       // Process each visitor individually
       const syncPromises = batch.map(async (visitor) => {
+        // ←===== 2) BACKOFF CHECK: skip if last attempt too recent or too many retries
+        const now = Date.now();
+        if (
+          (visitor.syncRetryCount ?? 0) >= 10 ||
+          (visitor.lastSyncAttempt &&
+            now - visitor.lastSyncAttempt < 5 * 60_000)
+        ) {
+          console.log(`Skipping ${visitor.recordUuid} due to back-off`);
+          return false;
+        }
+
         try {
           const visitorData = await prepareVisitorForSync(visitor);
           if (!visitorData) {
@@ -546,9 +596,12 @@ export const syncVisitors = async (): Promise<{
               base64Length: visitorData.photo?.image_base64?.length,
             }
           );
+          const ownerId = visitor.createdByUserId;
 
           // Send to API
-          const response = await axiosInstance.post(API_ENDPOINT, visitorData);
+          const response = await axiosInstance.post(API_ENDPOINT, visitorData, {
+            metadata: { userId: ownerId },
+          });
 
           // Check if UUID was processed successfully
           if (
@@ -572,6 +625,14 @@ export const syncVisitors = async (): Promise<{
           }
           return false;
         } catch (error: any) {
+          // ←===== 3) ON FAILURE: record retry count & timestamp
+          await database.write(() =>
+            visitor.update((v) => {
+              v.syncRetryCount = (v.syncRetryCount ?? 0) + 1;
+              v.lastSyncAttempt = Date.now();
+            })
+          );
+
           const axiosError = error as {
             response?: { data?: any; status?: number };
             message: string;
@@ -605,13 +666,11 @@ export const syncVisitors = async (): Promise<{
       const results = await Promise.all(syncPromises);
 
       // Count successes and failures
-      results.forEach((success) => {
-        if (success) syncedCount++;
-        else failedCount++;
-      });
+      results.forEach((r) => (r ? syncedCount++ : failedCount++));
+      await new Promise((r) => setTimeout(r, 300));
 
-      // Allow a small delay between batches to prevent UI freezing
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // // Allow a small delay between batches to prevent UI freezing
+      // await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
     // Clean up old images after sync is complete

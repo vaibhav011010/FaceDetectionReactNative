@@ -413,7 +413,7 @@ const ChangePasswordScreen = () => {
               />
             </View> */}
 
-            <View style={styles.inputContainer}>
+            <View style={[styles.inputContainer, { marginBottom: 30 }]}>
               <PaperTextInput
                 label={
                   <Text
@@ -510,7 +510,7 @@ const ChangePasswordScreen = () => {
                   end={{ x: -0.2, y: 2 }}
                   style={styles.linearGradient}
                 >
-                  <Text style={styles.signInButtonText}>Change Password</Text>
+                  <Text style={styles.signInButtonText}>Change</Text>
                 </LinearGradient>
               )}
             </TouchableOpacity>

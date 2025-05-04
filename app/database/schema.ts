@@ -4,7 +4,6 @@ import { appSchema, tableSchema } from "@nozbe/watermelondb";
 export const visitorSchema = tableSchema({
   name: "visitors",
   columns: [
-    { name: "user_id", type: "number", isIndexed: true },
     { name: "visitor_name", type: "string" },
     { name: "visitor_mobile_no", type: "string" },
     { name: "visiting_tenant_id", type: "number" },
@@ -16,6 +15,10 @@ export const visitorSchema = tableSchema({
     // ✅ New fields for sync handling
     { name: "visitor_sync_status", type: "string", isOptional: true },
     { name: "record_uuid", type: "string", isOptional: true },
+    { name: "created_by_user_id", type: "number" },
+    // schema.ts → visitorSchema.columns
+    { name: "last_sync_attempt", type: "number", isOptional: true },
+    { name: "sync_retry_count", type: "number", isOptional: true },
   ],
 });
 
@@ -31,7 +34,7 @@ export const companiesSchema = tableSchema({
 
 // Final Schema
 const schema = appSchema({
-  version: 15, // Increment version
+  version: 16, // Increment version
   tables: [
     visitorSchema,
     companiesSchema, // ✅ Add this

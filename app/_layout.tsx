@@ -4,7 +4,11 @@ import { Provider } from "react-redux";
 import { store } from "./store";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { useEffect, useRef } from "react";
-import { syncVisitors } from "./api/visitorForm";
+import {
+  syncVisitors,
+  startPeriodicSync,
+  stopPeriodicSync,
+} from "./api/visitorForm";
 import { PermissionProvider } from "../src/utility/permissionContext";
 import {
   LogBox,
@@ -21,29 +25,47 @@ if (!__DEV__) {
 }
 
 export default function Layout() {
-  const syncTimeoutRef = useRef<NodeJS.Timeout>();
   const lastSyncTime = useRef<number>(0);
 
-  // Network connectivity handler
+  // Network connectivity handler - triggers sync when network becomes available
   useEffect(() => {
     const handleNetworkChange = (state: NetInfoState) => {
       if (state.isConnected) {
         const now = Date.now();
         if (now - lastSyncTime.current > 30000) {
+          // Throttle to prevent too many syncs
           InteractionManager.runAfterInteractions(() => {
+            console.log("Network connected, triggering sync");
             syncVisitors()
-              .then(() => (lastSyncTime.current = Date.now()))
-              .catch(console.error);
+              .then((result) => {
+                lastSyncTime.current = Date.now();
+                console.log("Network reconnect sync result:", result);
+              })
+              .catch((error) => {
+                console.error("Network reconnect sync error:", error);
+              });
           });
         }
       }
     };
 
     const unsubscribe = NetInfo.addEventListener(handleNetworkChange);
+
+    // Initial network check and possible sync
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) {
+        console.log("Initial network check: Connected");
+        // Start periodic sync on initial load if connected
+        startPeriodicSync();
+      } else {
+        console.log("Initial network check: Not connected");
+      }
+    });
+
     return () => unsubscribe();
   }, []);
 
-  // Memory and app state handlers
+  // Handle app state changes for memory warnings and logging
   useEffect(() => {
     const handleMemoryWarning = () => {
       if (PERF_LOGGING_ENABLED) {
@@ -53,6 +75,27 @@ export default function Layout() {
 
     const handleAppStateChange = (state: AppStateStatus) => {
       console.log(`App state: ${state}`);
+
+      // When app comes to foreground, check for pending syncs
+      if (state === "active") {
+        NetInfo.fetch().then((netState) => {
+          if (netState.isConnected) {
+            // App has come to foreground with network connection
+            // Only sync if it's been a while
+            const now = Date.now();
+            if (now - lastSyncTime.current > 30000) {
+              InteractionManager.runAfterInteractions(() => {
+                syncVisitors()
+                  .then((result) => {
+                    lastSyncTime.current = Date.now();
+                    console.log("Foreground sync result:", result);
+                  })
+                  .catch(console.error);
+              });
+            }
+          }
+        });
+      }
     };
 
     const memorySub = AppState.addEventListener(
@@ -67,6 +110,7 @@ export default function Layout() {
     return () => {
       memorySub.remove();
       appStateSub.remove();
+      stopPeriodicSync();
     };
   }, []);
 

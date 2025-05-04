@@ -286,6 +286,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                 refreshToken: storedUser.refreshToken,
               })
             );
+            dispatch(setCorporateParkName(storedUser.corporateParkName));
             console.log("Offline login success dispatched");
             router.replace("/checkin-screen");
             console.log("Offline navigation to checkin-screen complete");
@@ -649,7 +650,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   style={{
                     color: "red",
                     fontSize: responsiveFontSize - 2,
-                    marginLeft: 5,
+                    marginLeft: 0,
+                    marginTop: -1,
                     fontFamily: "OpenSans_Condensed-Regular",
                   }}
                 >
@@ -713,7 +715,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                   style={{
                     color: "red",
                     fontSize: responsiveFontSize - 2,
-                    marginLeft: 5,
+                    marginLeft: 0,
+                    marginTop: -1,
                     fontFamily: "OpenSans_Condensed-Regular",
                   }}
                 >

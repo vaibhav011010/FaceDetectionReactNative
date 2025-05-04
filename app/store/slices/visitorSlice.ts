@@ -1,6 +1,6 @@
 // app/store/slices/visitorSlice.ts
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { RootState } from "../index"; // Assuming you have a store configuration
+import { AppDispatch, RootState } from "../index"; // Assuming you have a store configuration
 import axiosInstance from "../../api/axiosInstance"; // Adjust the path as needed
 import database from "../../database/index";
 import NetInfo from "@react-native-community/netinfo";
@@ -30,6 +30,7 @@ interface VisitorState {
   isMobileValid: boolean;
   visitorNameError: string | null;
   companyError: string | null;
+  allCompanies: CompanyOption[];
 }
 
 // Initial state (removed temporary company data)
@@ -37,7 +38,7 @@ const initialState: VisitorState = {
   visitorName: "",
   visitorMobile: "",
   visitingCompany: null,
-
+  allCompanies: [],
   photo: null,
   filteredCompanies: [],
   isLoading: false,
@@ -83,6 +84,9 @@ const visitorSlice = createSlice({
 
     setPhoto: (state, action: PayloadAction<string>) => {
       state.photo = action.payload;
+    },
+    setAllCompanies: (state, action: PayloadAction<CompanyOption[]>) => {
+      state.allCompanies = action.payload;
     },
     clearVisitorName: (state) => {
       state.visitorName = "";
@@ -183,6 +187,7 @@ export const {
   setCompanyError,
   syncSuccess,
   syncFailure,
+  setAllCompanies,
   clearSyncError,
 } = visitorSlice.actions;
 
@@ -248,6 +253,8 @@ export const loadInitialCompanies =
               userId: userId,
             })
           );
+
+          dispatch(setAllCompanies(mappedCompanies));
 
           console.log(
             `Setting ${mappedCompanies.length} companies in state for user ${userId}`
@@ -474,4 +481,14 @@ export const handleAccountChange =
     } catch (error) {
       console.error(`Error during account change to ${newUserId}:`, error);
     }
+  };
+// at the bottom of visitorSlice.ts (or in thunks.ts)
+export const filterOfflineCompanies =
+  (searchTerm: string) =>
+  (dispatch: AppDispatch, getState: () => RootState) => {
+    const allCompanies = getState().visitor.allCompanies;
+    const filtered = allCompanies.filter((c) =>
+      c.label.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    dispatch(setFilteredCompanies(filtered));
   };

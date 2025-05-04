@@ -217,6 +217,7 @@ export default function CheckinScreen() {
 const styles = StyleSheet.create({
   wrapper: {
     flex: 1,
+    backgroundColor: "#EEF2F6",
   },
   screen: {
     position: "absolute",
@@ -250,7 +251,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#EEF2F6",
   },
   loadingContainer: {
     flex: 1,
@@ -266,9 +267,9 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    backgroundColor: "white", // Deep navy blue
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#EEF2F6",
   },
   centeredContent: {
     width: "100%",
@@ -313,7 +314,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#C0C0C0", // Silver border
-    marginTop: 89,
+    marginTop: 60,
   },
   buttonText: {
     fontFamily: "OpenSans_Condensed-Bold",
@@ -323,7 +324,6 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     alignItems: "center",
-    marginBottom: 60,
   },
   logo: {
     width: 160,

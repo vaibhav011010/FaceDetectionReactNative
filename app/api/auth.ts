@@ -172,3 +172,49 @@ export const changePassword = async (
     throw error;
   }
 };
+// app/api/auth.ts
+
+export const getCurrentUserId = async (): Promise<number> => {
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("is_logged_in", true))
+    .fetch();
+  if (!users.length) throw new Error("No logged-in user");
+  return users[0].userId;
+};
+// Return the stored tokens for a specific userId
+export const getTokensForUser = async (userId: number) => {
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("user_id", userId))
+    .fetch();
+  if (!users.length) throw new Error(`No user ${userId}`);
+  return {
+    accessToken: users[0].accessToken,
+    refreshToken: users[0].refreshToken,
+  };
+};
+
+// Refresh only that user’s token
+export const refreshAccessTokenForUser = async (userId: number) => {
+  const { refreshToken } = await getTokensForUser(userId);
+  const response = await axiosBase.post("/api/token/refresh/", {
+    refresh: refreshToken,
+  });
+  const newAccess = response.data.access;
+  const newRefresh = response.data.refresh || refreshToken;
+
+  // persist back into that user record
+  await database.write(async () => {
+    const users = await database
+      .get<User>("users")
+      .query(Q.where("user_id", userId))
+      .fetch();
+    await users[0].update((u) => {
+      u.accessToken = newAccess;
+      if (response.data.refresh) u.refreshToken = newRefresh;
+    });
+  });
+
+  return newAccess;
+};

@@ -22,6 +22,7 @@ import {
 import { useRouter } from "expo-router";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { selectUser } from "../store/slices/authSlice";
+import NetInfo from "@react-native-community/netinfo";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useDispatch, useSelector } from "react-redux";
@@ -53,6 +54,7 @@ import {
   selectVisitorNameError,
   selectCompanyError,
   loadInitialCompanies,
+  filterOfflineCompanies,
 } from "../store/slices/visitorSlice";
 import { AppDispatch, RootState } from "../store";
 import StarIcon from "@/src/utility/starIcon";
@@ -123,24 +125,31 @@ export default function VisitorFormScreen() {
     if (text.trim().length > 0) {
       dispatch(setCompanyError(null));
     }
-    setDisplayCompanyName(text); // Update display text
+    setDisplayCompanyName(text);
     dispatch(setVisitingCompany(text as any));
     setIsCompanySelected(false);
 
-    // Clear any previous timer
     if (searchTimeout) {
       clearTimeout(searchTimeout);
     }
 
-    // Set a new timer to call API after a delay (300ms)
-    const timeout = setTimeout(() => {
-      if (user) {
-        const userIdString = user.id.toString();
-        dispatch(fetchCompanies(text, userIdString));
+    const timeout = setTimeout(async () => {
+      const netState = await NetInfo.fetch();
+
+      if (netState.isConnected) {
+        // ONLINE: fire your API search thunk
+        if (user) {
+          dispatch(fetchCompanies(text, user.id.toString()));
+        }
+      } else {
+        // OFFLINE: fire your local-filter thunk
+        dispatch(filterOfflineCompanies(text));
       }
-      // Optionally, show dropdown when results come in
+
+      // show the dropdown either way
       dispatch(setCompanyDropdownVisible(true));
     }, 300);
+
     setSearchTimeout(timeout);
   };
 
@@ -478,7 +487,7 @@ export default function VisitorFormScreen() {
                                 icon="close-circle-outline"
                                 onPress={handleClearName}
                                 color="#03045E"
-                                size={20}
+                                size={25}
                               />
                             ) : null
                           }
@@ -489,7 +498,8 @@ export default function VisitorFormScreen() {
                             style={{
                               color: "red",
                               fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
+                              marginLeft: 0,
+                              marginTop: -1,
                               fontFamily: "OpenSans_Condensed-Regular",
                             }}
                           >
@@ -573,7 +583,8 @@ export default function VisitorFormScreen() {
                             style={{
                               color: "red",
                               fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
+                              marginLeft: 0,
+                              marginTop: -1,
                               fontFamily: "OpenSans_Condensed-Regular",
                             }}
                           >
@@ -645,7 +656,8 @@ export default function VisitorFormScreen() {
                             style={{
                               color: "red",
                               fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
+                              marginLeft: 0,
+                              marginTop: -1,
                               fontFamily: "OpenSans_Condensed-Regular",
                             }}
                           >

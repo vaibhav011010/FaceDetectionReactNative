@@ -189,7 +189,7 @@ const forgotPassword = (props: Props) => {
               />
             </View>
 
-            <Text style={styles.welcomeText}>Forget Password</Text>
+            <Text style={styles.welcomeText}>Forgot Password</Text>
             <Text style={styles.infoText}>Enter your email to continue</Text>
 
             {/* <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} /> */}

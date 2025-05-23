@@ -17,6 +17,7 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
+import * as SecureStore from "expo-secure-store";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { changePassword } from "../api/auth";
@@ -108,7 +109,8 @@ const ChangePasswordScreen = () => {
         [
           {
             text: "OK",
-            onPress: () => {
+            onPress: async () => {
+              await SecureStore.setItemAsync("user_password", newPassword);
               // Dispatch logout action
               dispatch(logout());
               // Navigate back to login

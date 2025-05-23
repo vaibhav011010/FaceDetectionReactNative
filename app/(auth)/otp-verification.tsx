@@ -18,6 +18,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
@@ -26,6 +27,7 @@ import { useFonts } from "expo-font";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import { AxiosError } from "axios";
 import axiosInstance from "../api/axiosInstance";
+import * as SecureStore from "expo-secure-store";
 
 const { width, height } = Dimensions.get("window");
 
@@ -166,6 +168,9 @@ const otpVerification = (props: Props) => {
       );
 
       console.log("OTP Verified Successfully:", response.data);
+
+      await SecureStore.setItemAsync("rememberedPassword", password);
+      await AsyncStorage.setItem("rememberedChecked", "true");
 
       Alert.alert("Success", "Your password has been reset!", [
         { text: "OK", onPress: () => router.replace("/login") }, // Navigate to login

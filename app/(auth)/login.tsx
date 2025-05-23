@@ -16,12 +16,13 @@ import {
   Alert,
   Button,
 } from "react-native";
-import { TextInput as PaperTextInput } from "react-native-paper";
+import { TextInput as PaperTextInput, Checkbox } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
 import { LinearGradient } from "expo-linear-gradient";
 import { useFonts } from "expo-font";
 import NetInfo from "@react-native-community/netinfo";
+import * as SecureStore from "expo-secure-store";
 
 import { setCorporateParkName } from "../store/slices/globalSlice";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
@@ -45,6 +46,8 @@ import User from "../database/models/User";
 import database from "../database";
 import { Q } from "@nozbe/watermelondb";
 import { triggerLoginSync } from "../api/visitorForm";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { debounce } from "lodash";
 
 interface LoginFormProps {
@@ -59,6 +62,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [checked, setChecked] = useState(true);
 
   const dispatch = useAppDispatch();
   const router = useRouter();
@@ -81,6 +85,25 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
   // Set status bar to hidden when component mounts
   useEffect(() => {
     StatusBar.setHidden(true, "none");
+    const loadRememberedCredentials = async () => {
+      try {
+        const savedEmail = await AsyncStorage.getItem("rememberedEmail");
+        const savedPassword = await SecureStore.getItemAsync(
+          "rememberedPassword"
+        );
+        const savedChecked = await AsyncStorage.getItem("rememberedChecked");
+
+        if (savedEmail && savedPassword && savedChecked === "true") {
+          setEmail(savedEmail);
+          setPassword(savedPassword);
+          setChecked(true);
+        }
+      } catch (err) {
+        console.log("Error loading remembered credentials:", err);
+      }
+    };
+
+    loadRememberedCredentials();
 
     // Clean up when component unmounts
     return () => {
@@ -228,6 +251,16 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         console.log(
           "🛢Login successful but data sync failed. Some features may not work properly.🛢"
         );
+      }
+
+      if (checked) {
+        await AsyncStorage.setItem("rememberedEmail", trimmedEmail);
+        await SecureStore.setItemAsync("rememberedPassword", password);
+        await AsyncStorage.setItem("rememberedChecked", "true");
+      } else {
+        await AsyncStorage.removeItem("rememberedEmail");
+        await SecureStore.deleteItemAsync("rememberedPassword");
+        await AsyncStorage.removeItem("rememberedChecked");
       }
 
       await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
@@ -732,7 +765,17 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
             >
               <Text style={styles.forgotPasswordText}>Forgot Password</Text>
             </TouchableOpacity>
-
+            {/* <View style={styles.CheckBoxcontainer}>
+              <Checkbox.Android
+                status={checked ? "checked" : "unchecked"}
+                onPress={() => {
+                  setChecked(!checked);
+                }}
+                color="#03045E"
+                uncheckedColor="#03045E"
+              />
+              <Text style={styles.text}>Remember Me</Text>
+            </View> */}
             {/* Login Button with Gradient */}
             <TouchableOpacity
               activeOpacity={0.5}
@@ -834,8 +877,21 @@ const styles = StyleSheet.create({
     width: "85%",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 55,
+    marginTop: 45,
   },
+  CheckBoxcontainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 15, // adjust based on your layout
+    alignSelf: "flex-start",
+    marginLeft: 25,
+  },
+  text: {
+    color: "#03045E",
+    fontSize: 16,
+    fontFamily: "OpenSans_Condensed-Regular",
+  },
+
   linearGradient: {
     width: "100%",
     height: isTablet ? 55 : 45,

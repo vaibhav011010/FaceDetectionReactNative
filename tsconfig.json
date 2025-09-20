@@ -4,16 +4,17 @@
     "experimentalDecorators": true,
     "target": "es2017",
     "moduleResolution": "node",
+    "isolatedModules": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-
     "module": "esnext",
     "jsx": "react-native",
     "strict": true,
     "baseUrl": ".",
+    "types": ["jest"],
     "paths": {
       "@/*": ["./*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
 }

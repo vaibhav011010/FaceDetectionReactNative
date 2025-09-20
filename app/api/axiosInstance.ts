@@ -1,9 +1,15 @@
 // axiosInstance.ts
-import axios from "axios";
+import axios, { AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import NetInfo from "@react-native-community/netinfo";
-import { refreshAccessToken, getAccessToken } from "./auth";
+import {
+  getTokensForUser,
+  refreshAccessTokenForUser,
+  getCurrentUserId,
+} from "./auth";
 
-const API_BASE_URL = "https://webapptest1.site/";
+const API_BASE_URL = "https://quikcheckapi.site/";
+
+//const API_BASE_URL = "https://webapptest3.online";
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -20,76 +26,93 @@ let failedQueue: Array<{
   reject: (error: any) => void;
 }> = [];
 
-// Helper to process queued requests after refresh
+// Process queued requests after refresh
 const processQueue = (error: any, token: string | null = null) => {
   failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else if (token) {
-      prom.resolve(token);
-    }
+    if (error) prom.reject(error);
+    else if (token) prom.resolve(token);
   });
   failedQueue = [];
 };
 
-// Request interceptor: attach token before sending the request.
-axiosInstance.interceptors.request.use(
-  async (config) => {
-    const netState = await NetInfo.fetch();
-    let token = await getAccessToken();
+// Extend InternalAxiosRequestConfig to include optional metadata and _retry
+interface AuthRequestConfig extends InternalAxiosRequestConfig {
+  metadata?: { userId?: number };
+  _retry?: boolean;
+}
 
-    // When online, attempt a token refresh.
-    // (You might improve this by checking if the token is about to expire.)
+// Request interceptor: attach correct token per user
+axiosInstance.interceptors.request.use(
+  async (configOrig: InternalAxiosRequestConfig) => {
+    const config = configOrig as AuthRequestConfig;
+    const netState = await NetInfo.fetch();
+
+    // Determine which userId to use: metadata.userId or current
+    let userId = config.metadata?.userId;
+    if (userId == null) {
+      userId = await getCurrentUserId();
+    }
+
+    // Fetch stored tokens for that user
+    let { accessToken } = await getTokensForUser(userId);
+
+    // If online, attempt to refresh that user’s token
     if (netState.isConnected) {
-      const refreshedToken = await refreshAccessToken();
-      if (refreshedToken) {
-        token = refreshedToken;
+      try {
+        const newAccess = await refreshAccessTokenForUser(userId);
+        if (newAccess) accessToken = newAccess;
+      } catch {
+        // swallow refresh errors, use existing token
       }
     }
 
-    if (token) {
-      config.headers.Authorization = `JWT ${token}`;
-    }
+    // Ensure headers object
+    config.headers = config.headers ?? {};
+    (
+      config.headers as Record<string, string>
+    ).Authorization = `JWT ${accessToken}`;
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor: if a 401 occurs, refresh the token and retry.
+// Response interceptor: if a 401 occurs, refresh the token for that user and retry
 axiosInstance.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    const originalRequest = error.config as AuthRequestConfig;
+    const status = error.response?.status;
 
-    if (
-      error.response &&
-      error.response.status === 401 &&
-      !originalRequest._retry
-    ) {
+    if (status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      // Determine userId for this request
+      let userId = originalRequest.metadata?.userId;
+      if (userId == null) {
+        userId = await getCurrentUserId();
+      }
+
       if (isRefreshing) {
-        // Queue the request if a refresh is already in progress
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
-            originalRequest.headers.Authorization = `JWT ${token}`;
+            (
+              originalRequest.headers as Record<string, string>
+            ).Authorization = `JWT ${token}`;
             return axiosInstance(originalRequest);
           })
           .catch((err) => Promise.reject(err));
       }
 
-      originalRequest._retry = true;
       isRefreshing = true;
-
       return new Promise(async (resolve, reject) => {
         try {
-          const newToken = await refreshAccessToken();
-          if (!newToken) {
-            reject(error);
-            return;
-          }
-          originalRequest.headers.Authorization = `JWT ${newToken}`;
+          const newToken = await refreshAccessTokenForUser(userId!);
           processQueue(null, newToken);
+          (
+            originalRequest.headers as Record<string, string>
+          ).Authorization = `JWT ${newToken}`;
           resolve(axiosInstance(originalRequest));
         } catch (err) {
           processQueue(err, null);

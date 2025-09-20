@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
   Platform,
   Animated,
+  InteractionManager,
   Alert,
 } from "react-native";
 import { useSelector } from "react-redux";
@@ -22,7 +23,44 @@ import { Svg, Circle, Path, G } from "react-native-svg";
 import { LoginContext } from "../context/LoginContext";
 import NetInfo from "@react-native-community/netinfo";
 import UserProfileIcon from "@/src/utility/UserSvg";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { logTableData } from "@/src/utility/logTable";
+import { logAllVisitors } from "@/src/utility/log";
+// Custom hook for responsive dimensions
 
+const useResponsiveDimensions = () => {
+  const [dimensions, setDimensions] = useState(() => {
+    const window = Dimensions.get("window");
+    const screen = Dimensions.get("screen");
+    return {
+      windowWidth: window.width,
+      windowHeight: window.height,
+      screenHeight: screen.height, // Full screen height
+    };
+  });
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener(
+      "change",
+      ({ window, screen }) => {
+        setDimensions({
+          windowWidth: window.width,
+          windowHeight: window.height,
+          screenHeight: screen.height,
+        });
+      }
+    );
+
+    return () => subscription?.remove();
+  }, []);
+
+  return {
+    ...dimensions,
+    actualHeight: dimensions.screenHeight, // Use this for full height
+    isLandscape: dimensions.windowWidth > dimensions.windowHeight,
+    isTablet: Math.min(dimensions.windowWidth, dimensions.windowHeight) >= 768,
+  };
+};
 const windowWidth = Dimensions.get("window").width;
 const { width, height } = Dimensions.get("window");
 
@@ -36,8 +74,9 @@ export default function CheckinScreen() {
   const [isLoading, setIsLoading] = useState(false);
 
   const responsiveFontSize = 16 / fontScale;
-  const windowWidth = Dimensions.get("window").width;
-  const windowHeight = Dimensions.get("window").height;
+  const { windowWidth, windowHeight, isLandscape, isTablet, screenHeight } =
+    useResponsiveDimensions();
+
   const corporateParkName = useSelector(
     (state: RootState) => state.global.corporateParkName
   );
@@ -57,18 +96,26 @@ export default function CheckinScreen() {
 
   // Handle button press
   const handleNewVisit = () => {
-    setTransitioning(true);
-    Animated.parallel([
-      Animated.timing(currentSlide, {
-        toValue: -windowWidth,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      // Navigate and reset animations as needed
-      router.replace("/visitorform-screen");
+    setTransitioning(true); // show overlay
+
+    Animated.timing(currentSlide, {
+      toValue: -windowWidth,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      InteractionManager.runAfterInteractions(() => {
+        try {
+          router.replace("/visitorform-screen");
+        } catch (e) {
+          console.error("Navigation failed:", e);
+        } finally {
+          // always reset transitioning in case of error
+          setTransitioning(false);
+        }
+      });
     });
   };
+
   // Load custom fonts
   const [fontsLoaded] = useFonts({
     "OpenSans_Condensed-Bold": require("../../assets/fonts/OpenSans_Condensed-Bold.ttf"),
@@ -84,6 +131,78 @@ export default function CheckinScreen() {
       </View>
     );
   }
+  // Create responsive styles
+  const responsiveStyles = StyleSheet.create({
+    screen: {
+      position: "absolute",
+      width: windowWidth,
+      height: screenHeight,
+      backgroundColor: "#EEF2F6",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    borderContainer: {
+      width: windowWidth,
+      height: windowHeight,
+    },
+    centeredContent: {
+      width: "100%",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: isLandscape ? windowWidth * 0.1 : 20,
+      paddingVertical: isLandscape ? 10 : 20,
+    },
+    welcomeText: {
+      fontFamily: "OpenSans_Condensed-Bold",
+      fontSize: isTablet ? (isLandscape ? 32 : 35) : isLandscape ? 22 : 25,
+      color: "#03045E",
+      textAlign: "center",
+      marginBottom: isLandscape ? 15 : 20,
+    },
+    logoContainer: {
+      alignItems: "center",
+      marginBottom: isLandscape ? 30 : 60,
+    },
+    logo: {
+      width: isLandscape ? 120 : 160,
+      height: isLandscape ? 120 : 160,
+    },
+    newVisitButton: {
+      height: isLandscape ? 55 : 65,
+      width: isLandscape ? 220 : 248,
+      flexDirection: "row",
+      backgroundColor: "#03045E",
+      borderRadius: 5,
+      justifyContent: "center",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: "#C0C0C0",
+      marginTop: isLandscape ? 40 : 89,
+    },
+    buttonText: {
+      fontFamily: "OpenSans_Condensed-Bold",
+      fontSize: isTablet ? (isLandscape ? 18 : 20) : isLandscape ? 16 : 18,
+      color: "#FAFAFA",
+      marginHorizontal: 10,
+    },
+    // Landscape-specific layout
+    landscapeLayout: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-around",
+      paddingHorizontal: windowWidth * 0.05,
+    },
+    landscapeLeftSection: {
+      flex: 1,
+      alignItems: "center",
+    },
+    landscapeRightSection: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+  });
+
   // // Power Button Component
   // const PowerButton: React.FC<{ onPress: () => void }> = ({ onPress }) => (
   //   <TouchableOpacity style={styles.powerButton} onPress={onPress}>
@@ -147,76 +266,96 @@ export default function CheckinScreen() {
   //     },
   //   ]);
   // };
+  useEffect(() => {
+    // Log visitors table every time screen mounts
+    logAllVisitors();
+  }, []);
+
   return (
-    <View style={styles.wrapper}>
-      {/* Power Button positioned at top right */}
-      {/* <PowerButton onPress={handlePowerPress} /> */}
-      <Animated.View
-        style={[styles.screen, { transform: [{ translateX: currentSlide }] }]}
-      >
-        <View style={styles.container}>
-          <View
-            style={[
-              styles.borderContainer,
-              { width: windowWidth, height: windowHeight },
-            ]}
-          >
-            <View style={styles.contentContainer}>
-              <View style={styles.centeredContent}>
-                {/* Welcome Header */}
-                <Text style={styles.welcomeText}>
-                  WELCOME TO {corporateParkName.toUpperCase()}
-                </Text>
-
-                {/* Company Logo */}
-                {/* <View style={styles.logoContainer}>
-              <View style={styles.logoCircle}>
-                <Text style={styles.logoText}>Anpr</Text>
-              </View>
-            </View> */}
-                <View style={styles.imageContainer}>
-                  <Image
-                    source={require("../../assets/Logo1.png")} // Replace with your image path
-                    style={styles.logo}
-                  />
-                </View>
-
-                {/* New Visit Button */}
-                <TouchableOpacity
-                  style={styles.newVisitButton}
-                  activeOpacity={0.8}
-                  onPress={handleNewVisit}
-                >
-                  <UserProfileIcon />
-                  <Text style={styles.buttonText}>Check In</Text>
-                </TouchableOpacity>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#EEF2F6" }} edges={[]}>
+      <View style={styles.wrapper}>
+        <Animated.View
+          style={[
+            responsiveStyles.screen,
+            { transform: [{ translateX: currentSlide }] },
+          ]}
+        >
+          <View style={styles.container}>
+            <View style={responsiveStyles.borderContainer}>
+              <View style={styles.contentContainer}>
+                {isLandscape ? (
+                  // Landscape Layout
+                  <View style={responsiveStyles.landscapeLayout}>
+                    <View style={responsiveStyles.landscapeLeftSection}>
+                      <Text style={responsiveStyles.welcomeText}>
+                        WELCOME TO {corporateParkName.toUpperCase()}
+                      </Text>
+                      <View style={responsiveStyles.logoContainer}>
+                        <Image
+                          source={require("../../assets/Logo1.png")}
+                          style={responsiveStyles.logo}
+                        />
+                      </View>
+                    </View>
+                    <View style={responsiveStyles.landscapeRightSection}>
+                      <TouchableOpacity
+                        style={responsiveStyles.newVisitButton}
+                        activeOpacity={0.8}
+                        onPress={handleNewVisit}
+                      >
+                        <UserProfileIcon />
+                        <Text style={responsiveStyles.buttonText}>
+                          Check In
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  // Portrait Layout
+                  <View style={responsiveStyles.centeredContent}>
+                    <Text style={responsiveStyles.welcomeText}>
+                      WELCOME TO {corporateParkName.toUpperCase()}
+                    </Text>
+                    <View style={responsiveStyles.logoContainer}>
+                      <Image
+                        source={require("../../assets/Logo1.png")}
+                        style={responsiveStyles.logo}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={responsiveStyles.newVisitButton}
+                      activeOpacity={0.8}
+                      onPress={handleNewVisit}
+                    >
+                      <UserProfileIcon />
+                      <Text style={responsiveStyles.buttonText}>Check In</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             </View>
           </View>
-        </View>
-      </Animated.View>
-      {/* Full-screen loading overlay */}
-      {isLoading && (
-        <View style={styles.fullScreenLoader}>
-          <View style={styles.loaderContainer}>
-            <ActivityIndicator size="large" color="#03045E" />
-          </View>
-        </View>
-      )}
-      {/* {transitioning && (
-        <Animated.View
-          style={[styles.newScreen, { transform: [{ translateX: nextSlide }] }]}
-        >
-          <ActivityIndicator size="large" color="#03045E" />
         </Animated.View>
-      )} */}
-    </View>
+
+        {/* Full-screen loading overlay */}
+        {isLoading && (
+          <View style={styles.fullScreenLoader}>
+            <View style={styles.loaderContainer}>
+              <ActivityIndicator size="large" color="#03045E" />
+            </View>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
     flex: 1,
+    width: "100%",
+    height: "auto",
+    backgroundColor: "#EEF2F6",
   },
   screen: {
     position: "absolute",
@@ -250,13 +389,13 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#EEF2F6",
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#000",
+    backgroundColor: "#EEF2F6",
   },
   borderContainer: {
     // borderWidth: 14,
@@ -266,7 +405,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flex: 1,
-    backgroundColor: "white", // Deep navy blue
+    backgroundColor: "#EEF2F6",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -281,6 +420,7 @@ const styles = StyleSheet.create({
     fontSize: isTablet ? 35 : 25,
     color: "#03045E",
     textAlign: "center",
+
     marginBottom: 20,
   },
   logoContainer: {

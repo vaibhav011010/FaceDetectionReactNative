@@ -1,16 +1,26 @@
 // app/api/auth.ts
+import { AxiosRequestConfig } from "axios";
 import axiosInstance from "./axiosInstance";
+import { withTimeout } from "@/src/utility/withTimeout";
 import database from "../database";
 import User from "../database/models/User";
 import { Q } from "@nozbe/watermelondb";
 import axiosBase from "./axiosBase";
 
-export const login = async (email: string, password: string) => {
-  const response = await axiosBase.post(`/accounts/login/`, {
-    email,
-    password,
-  });
-
+export const login = async (
+  email: string,
+  password: string,
+  config: AxiosRequestConfig = {}
+) => {
+  const response = await withTimeout(
+    (signal) =>
+      axiosBase.post(
+        `/accounts/login/`,
+        { email, password },
+        { ...config, signal }
+      ),
+    4000 // 4 seconds timeout
+  );
   // // Check if user is already logged in on another device
   // if (response.data.isLoggedIn === true) {
   //   throw new Error("ALREADY_LOGGED_IN");
@@ -171,4 +181,50 @@ export const changePassword = async (
     console.error("Password change failed:", error);
     throw error;
   }
+};
+// app/api/auth.ts
+
+export const getCurrentUserId = async (): Promise<number> => {
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("is_logged_in", true))
+    .fetch();
+  if (!users.length) throw new Error("No logged-in user");
+  return users[0].userId;
+};
+// Return the stored tokens for a specific userId
+export const getTokensForUser = async (userId: number) => {
+  const users = await database
+    .get<User>("users")
+    .query(Q.where("user_id", userId))
+    .fetch();
+  if (!users.length) throw new Error(`No user ${userId}`);
+  return {
+    accessToken: users[0].accessToken,
+    refreshToken: users[0].refreshToken,
+  };
+};
+
+// Refresh only that user’s token
+export const refreshAccessTokenForUser = async (userId: number) => {
+  const { refreshToken } = await getTokensForUser(userId);
+  const response = await axiosBase.post("/api/token/refresh/", {
+    refresh: refreshToken,
+  });
+  const newAccess = response.data.access;
+  const newRefresh = response.data.refresh || refreshToken;
+
+  // persist back into that user record
+  await database.write(async () => {
+    const users = await database
+      .get<User>("users")
+      .query(Q.where("user_id", userId))
+      .fetch();
+    await users[0].update((u) => {
+      u.accessToken = newAccess;
+      if (response.data.refresh) u.refreshToken = newRefresh;
+    });
+  });
+
+  return newAccess;
 };

@@ -1,7 +1,7 @@
 // PermissionContext.tsx
 import React, { createContext, useState, useEffect, useContext } from "react";
-import { Alert } from "react-native";
-import { Camera } from "react-native-vision-camera"; // or your camera lib
+import { Alert, ActivityIndicator, View } from "react-native";
+import { Camera } from "react-native-vision-camera";
 
 interface PermissionContextProps {
   hasCameraPermission: boolean | null;
@@ -21,8 +21,10 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     const requestPermission = async () => {
       const status = await Camera.requestCameraPermission();
-      setHasCameraPermission(status === "granted");
-      if (status !== "granted") {
+      const granted = status === "granted";
+      setHasCameraPermission(granted);
+
+      if (!granted) {
         Alert.alert(
           "Camera Permission",
           "Camera permission is required for this app to function properly. Please enable it in settings."
@@ -32,6 +34,15 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({
 
     requestPermission();
   }, []);
+
+  if (hasCameraPermission === null) {
+    // ⏳ While permission is still being checked, show a loading screen
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="#000" />
+      </View>
+    );
+  }
 
   return (
     <PermissionContext.Provider value={{ hasCameraPermission }}>

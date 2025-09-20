@@ -8,6 +8,9 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { v4 as uuidv4 } from "uuid";
 import { AppState, AppStateStatus } from "react-native";
 import * as Crypto from "expo-crypto";
+import { getCurrentUserId } from "./auth";
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
+import { safePost } from "@/src/utility/network";
 
 // Use the relative endpoint as baseURL is set in axiosInstance
 const API_ENDPOINT = "/visitors/add_visitor/";
@@ -16,8 +19,46 @@ const VISITOR_IMAGES_DIR = `${FileSystem.documentDirectory}visitor_images`;
 // Timer reference for sync
 let syncIntervalId: ReturnType<typeof setInterval> | null = null;
 
-const SYNC_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+const SYNC_INTERVAL = 2 * 60 * 1000; // 15 minutes in milliseconds
 let appStateListener: any = null;
+
+export const isServerOnline = async (): Promise<boolean> => {
+  try {
+    // First check device connectivity
+    const netState = await NetInfo.fetch();
+    if (!netState.isConnected || !netState.isInternetReachable) {
+      console.log("📴 No internet connection");
+      return false;
+    }
+
+    // Use a lightweight HEAD request to confirm server reachability
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch("https://webapptest3.online", {
+      method: "HEAD",
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    // Consider online if we get any valid response
+    if (response.ok || response.status < 500) {
+      console.log("✅ Server reachable");
+      return true;
+    }
+
+    console.log("⚠️ Server responded but not healthy:", response.status);
+    return false;
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      console.log("⏳ Network timeout, treating as offline");
+    } else {
+      console.log("🛑 Server unreachable:", error.message || error);
+    }
+    return false;
+  }
+};
 
 // Ensure the directory exists
 const ensureDirectoryExists = async () => {
@@ -102,23 +143,21 @@ const saveImageToFile = async (base64Data: string): Promise<string> => {
  */
 export const startPeriodicSync = () => {
   // Clear any existing timer
-  if (syncIntervalId) {
-    clearInterval(syncIntervalId);
-  }
+  if (syncIntervalId) clearInterval(syncIntervalId);
 
-  // Set up new interval
+  // Start new timer
   syncIntervalId = setInterval(() => {
-    console.log("Running periodic sync (15-minute interval)");
+    console.log("Running periodic sync");
     syncVisitors();
   }, SYNC_INTERVAL);
 
-  // Set up app state listener to handle background/foreground transitions
-  if (!appStateListener) {
-    appStateListener = AppState.addEventListener(
-      "change",
-      handleAppStateChange
-    );
+  // Reset listener safely
+  if (appStateListener) {
+    appStateListener.remove();
+    appStateListener = null;
   }
+
+  appStateListener = AppState.addEventListener("change", handleAppStateChange);
 
   console.log("Periodic sync started");
 };
@@ -128,9 +167,21 @@ export const startPeriodicSync = () => {
  */
 const handleAppStateChange = (nextAppState: AppStateStatus) => {
   if (nextAppState === "active") {
-    // App came to foreground, trigger a sync
-    console.log("App came to foreground, triggering sync");
-    syncVisitors();
+    // App came to foreground, check network then trigger sync
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) {
+        console.log("App came to foreground with network, triggering sync");
+        syncVisitors()
+          .then((result) => {
+            console.log("App foreground sync completed:", result);
+          })
+          .catch((error) => {
+            console.error("App foreground sync failed:", error);
+          });
+      } else {
+        console.log("App came to foreground but no network, skipping sync");
+      }
+    });
   }
 };
 
@@ -158,15 +209,26 @@ export const stopPeriodicSync = () => {
 export const triggerLoginSync = async () => {
   console.log("Security guard logged in, triggering sync");
 
-  // Run the sync
-  const result = await syncVisitors();
+  // Check network before running sync
+  const networkState = await NetInfo.fetch();
+  let result = { success: false, syncedCount: 0, failedCount: 0 };
 
-  // Start the periodic sync timer
+  if (networkState.isConnected) {
+    // Run the sync
+    result = await syncVisitors();
+    console.log("Login sync result:", result);
+  } else {
+    console.log(
+      "No network connection during login, sync will happen when connection is available"
+    );
+  }
+
+  // Start the periodic sync timer regardless of network status
+  // It will check network before each sync attempt
   startPeriodicSync();
 
   return result;
 };
-
 /**
  * Clean up and cancel sync timer on logout
  */
@@ -178,6 +240,38 @@ export const handleLogout = () => {
  * - If the API call succeeds, the record is stored locally as synced.
  * - If a network error occurs, the record is stored locally as unsynced for later sync.
  */
+
+const storeVisitorLocally = async (
+  visitorName: string,
+  visitorMobileNo: string,
+  visitingTenantId: number,
+  visitorPhotoBase64: string,
+  existingUuid?: string,
+  createdDatetime?: string
+) => {
+  const imageFilePath = await saveImageToFile(visitorPhotoBase64);
+  const imageName = `visitor_${Date.now()}.jpg`;
+  const currentUserId = await getCurrentUserId();
+
+  await database.write(async () => {
+    await database.get<Visitor>("visitors").create((visitor) => {
+      visitor.visitorName = visitorName;
+      visitor.visitorMobileNo = visitorMobileNo;
+      visitor.visitingTenantId = visitingTenantId;
+      visitor.visitorPhoto = imageFilePath;
+      visitor.visitorPhotoName = imageName;
+      visitor.timestamp = Date.now();
+      visitor.isSynced = false;
+      visitor.recordUuid = existingUuid || Crypto.randomUUID();
+      visitor.createdByUserId = currentUserId;
+      visitor.visitorSyncStatus = "not_synced";
+      visitor.createdDatetime = createdDatetime || new Date().toISOString();
+    });
+  });
+
+  console.log("Visitor stored locally for later sync.");
+};
+
 export const submitVisitor = async (
   visitorName: string,
   visitorMobileNo: string,
@@ -189,7 +283,10 @@ export const submitVisitor = async (
   error?: string;
   warning?: string;
 }> => {
+  // Add this: Generate UUID for this record
+  const recordUuid = Crypto.randomUUID();
   try {
+    const currentUserId = await getCurrentUserId();
     // Compress the image first
     const compressedPhotoBase64 = await compressImage(visitorPhotoBase64);
 
@@ -197,18 +294,14 @@ export const submitVisitor = async (
       visitor_name: visitorName,
       visitor_mobile_no: visitorMobileNo,
       visiting_tenant_id: visitingTenantId,
-      photoLength: compressedPhotoBase64.length,
+      //photoLength: compressedPhotoBase64.length,
     });
 
     // Generate a unique image name using timestamp
     const timestamp = new Date().getTime();
     const imageName = `visitor_${timestamp}.jpg`;
 
-    console.log("About to generate UUID");
-
-    // Add this: Generate UUID for this record
-    const recordUuid = Crypto.randomUUID();
-    console.log("Generated UUID:", recordUuid);
+    const createdDatetime = new Date().toISOString();
 
     const photoObject = {
       image_name: imageName,
@@ -219,21 +312,46 @@ export const submitVisitor = async (
     const imageFilePath = await saveImageToFile(compressedPhotoBase64);
 
     // Send to server
-    const response = await axiosInstance.post(API_ENDPOINT, {
-      visitor_name: visitorName,
-      photo: photoObject,
-      visitor_mobile_no: visitorMobileNo,
-      visiting_tenant_id: visitingTenantId,
-      uuid: recordUuid,
-    });
+    const response = await axiosInstance.post(
+      API_ENDPOINT,
+      {
+        visitor_name: visitorName,
+        photo: photoObject,
+        visitor_mobile_no: visitorMobileNo,
+        visiting_tenant_id: visitingTenantId,
+        uuid: recordUuid,
+        created_datetime: createdDatetime,
+      },
+      { metadata: { userId: currentUserId } }
+    );
+
     console.log("About to send API request with data:", {
       visitor_name: visitorName,
       visitor_mobile_no: visitorMobileNo,
       visiting_tenant_id: visitingTenantId,
       record_uuid: recordUuid,
       // Don't log the full base64 image
-      photo_size: photoObject.image_base64.length,
+      //photo_size: photoObject.image_base64.length,
     });
+
+    if (response.status !== 200 && response.status !== 201) {
+      console.warn(
+        `Unexpected response status: ${response.status}. Storing locally.`
+      );
+      await storeVisitorLocally(
+        visitorName,
+        visitorMobileNo,
+        visitingTenantId,
+        visitorPhotoBase64,
+        recordUuid,
+        createdDatetime
+      );
+      return {
+        success: false,
+        error: `Unexpected server status ${response.status}. Stored locally for sync.`,
+      };
+    }
+
     // console.log("API Response Status:", response.status);
     // console.log("API Response Headers:", JSON.stringify(response.headers));
     // console.log("API Response Data:", JSON.stringify(response.data));
@@ -250,33 +368,48 @@ export const submitVisitor = async (
 
     // Database operation with better error handling
     try {
-      await database.write(async () => {
-        await database.get<Visitor>("visitors").create((visitor) => {
-          console.log("Setting visitorName");
-          visitor.visitorName = visitorName;
-          console.log("Setting visitorMobileNo");
-          visitor.visitorMobileNo = visitorMobileNo;
-          console.log("Setting visitingTenantId");
-          visitor.visitingTenantId = visitingTenantId;
-          console.log("Setting visitorPhoto");
-          visitor.visitorPhoto = imageFilePath;
-          console.log("Setting isSynced");
-          // visitor.visitorPhotoName = imageName;
-          console.log("Setting imageName");
-          visitor.isSynced = true;
-          console.log("Setting timestamp");
-          console.log("Setting syncStatus"); // Changed from isSynced
-          visitor.visitorSyncStatus = "synced";
-          visitor.timestamp = Date.now();
-          console.log("Setting serverId");
-          visitor.serverId = responseId;
-          console.log("Setting recordUuid"); // Add this
-          visitor.recordUuid = recordUuid;
+      if ((response.status === 200 || response.status === 201) && responseId) {
+        await database.write(async () => {
+          await database.get<Visitor>("visitors").create((visitor) => {
+            visitor.visitorName = visitorName;
+            visitor.visitorMobileNo = visitorMobileNo;
+            visitor.visitingTenantId = visitingTenantId;
+            visitor.visitorPhoto = imageFilePath;
+            // visitor.visitorPhotoName = imageName;
+            visitor.createdByUserId = currentUserId;
+            visitor.isSynced = true;
+            visitor.visitorSyncStatus = "synced";
+            visitor.timestamp = Date.now();
+            visitor.serverId = responseId;
+            visitor.recordUuid = recordUuid;
+            visitor.createdDatetime = createdDatetime;
+          });
         });
-      });
+      } else {
+        // Store locally as unsynced
+        await database.write(async () => {
+          await database.get<Visitor>("visitors").create((visitor) => {
+            visitor.visitorName = visitorName;
+            visitor.visitorMobileNo = visitorMobileNo;
+            visitor.visitingTenantId = visitingTenantId;
+            visitor.visitorPhoto = imageFilePath;
+            visitor.visitorPhotoName = imageName;
+            visitor.createdByUserId = currentUserId;
+            visitor.timestamp = Date.now();
+            visitor.recordUuid = recordUuid;
+            visitor.createdDatetime = createdDatetime;
+
+            // ❌ Do NOT mark as synced
+            visitor.isSynced = false;
+            visitor.visitorSyncStatus = "not_synced";
+            visitor.serverId = null;
+          });
+        });
+      }
       return { success: true, data: response.data };
     } catch (error: unknown) {
       console.error("Database write error details:", error);
+
       // Return partial success since API call worked but local storage failed
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -288,6 +421,7 @@ export const submitVisitor = async (
     }
   } catch (error: unknown) {
     // Detailed error logging
+
     console.error("=== SUBMIT VISITOR ERROR ===");
     console.error("Error type:", typeof error);
     console.error(
@@ -301,6 +435,7 @@ export const submitVisitor = async (
       // The request was made and the server responded with a status code
       // that falls out of the range of 2xx
       console.error("Error status:", axiosError.response.status);
+
       console.error(
         "Error headers:",
         JSON.stringify(axiosError.response.headers)
@@ -329,6 +464,7 @@ export const submitVisitor = async (
       try {
         const imageFilePath = await saveImageToFile(visitorPhotoBase64);
         const imageName = `visitor_${Date.now()}.jpg`;
+        const currentUserId = await getCurrentUserId();
 
         await database.write(async () => {
           await database.get<Visitor>("visitors").create((visitor) => {
@@ -339,8 +475,10 @@ export const submitVisitor = async (
             visitor.visitorPhotoName = imageName;
             visitor.timestamp = Date.now();
             visitor.isSynced = false;
-            visitor.recordUuid = Crypto.randomUUID();
+            visitor.recordUuid = recordUuid;
+            visitor.createdByUserId = currentUserId;
             visitor.visitorSyncStatus = "not_synced";
+            visitor.createdDatetime = new Date().toISOString();
           });
         });
         console.log("Successfully stored locally for later sync");
@@ -395,6 +533,8 @@ const prepareVisitorForSync = async (visitor: Visitor) => {
     image_name: imageName,
     image_base64: base64Data,
   };
+  const createdDatetime =
+    visitor.createdDatetime || new Date(visitor.timestamp).toISOString();
 
   return {
     visitor_name: visitor.visitorName,
@@ -402,7 +542,46 @@ const prepareVisitorForSync = async (visitor: Visitor) => {
     visitor_mobile_no: visitor.visitorMobileNo,
     visiting_tenant_id: visitor.visitingTenantId,
     uuid: visitor.recordUuid,
+    created_datetime: createdDatetime,
   };
+};
+
+export const debugSyncRecords = async () => {
+  const currentUserId = await getCurrentUserId();
+
+  // Check ALL records
+  const allVisitors = await database.get<Visitor>("visitors").query().fetch();
+  console.log(`🔎 Total records in DB: ${allVisitors.length}`);
+
+  // Check unsynced records (without user filter)
+  const allUnsynced = await database
+    .get<Visitor>("visitors")
+    .query(Q.where("visitor_sync_status", "not_synced"))
+    .fetch();
+  console.log(`🔎 Total unsynced records: ${allUnsynced.length}`);
+
+  // Check current user's unsynced records
+  const userUnsynced = await database
+    .get<Visitor>("visitors")
+    .query(
+      Q.where("visitor_sync_status", "not_synced"),
+      Q.where("created_by_user_id", currentUserId)
+    )
+    .fetch();
+  console.log(`🔎 Current user unsynced: ${userUnsynced.length}`);
+  console.log(`🔎 Current user ID: ${currentUserId}`);
+
+  // Sample a few records to see their state
+  allUnsynced.slice(0, 3).forEach((record, index) => {
+    console.log(`🔎 Sample record ${index + 1}:`, {
+      id: record.id,
+      recordUuid: record.recordUuid,
+      visitorSyncStatus: record.visitorSyncStatus,
+      isSynced: record.isSynced,
+      createdByUserId: record.createdByUserId,
+      serverId: record.serverId,
+    });
+  });
 };
 
 /**
@@ -502,16 +681,38 @@ const prepareVisitorForSync = async (visitor: Visitor) => {
  * Syncs all unsynced visitor records with the API.
  * Processes in batches to avoid memory issues.
  */
+
+const isDuplicateUuidError = (error: any): boolean => {
+  return (
+    error?.response?.data?.error?.uuid &&
+    Array.isArray(error.response.data.error.uuid) &&
+    error.response.data.error.uuid.some((msg: string) =>
+      msg.toLowerCase().includes("uuid already exists")
+    )
+  );
+};
+
 export const syncVisitors = async (): Promise<{
   success: boolean;
   syncedCount: number;
   failedCount: number;
 }> => {
   try {
+    const online = await isServerOnline();
+    if (!online) {
+      console.warn("🚫 Server is offline. Skipping sync for now.");
+      return { success: false, syncedCount: 0, failedCount: 0 };
+    }
+
+    const currentUserId = await getCurrentUserId();
+
     // Query unsynced visitor records
     const unsyncedVisitors = await database
       .get<Visitor>("visitors")
-      .query(Q.where("visitor_sync_status", "not_synced"))
+      .query(
+        Q.where("visitor_sync_status", "not_synced"),
+        Q.where("created_by_user_id", currentUserId)
+      )
       .fetch();
 
     if (unsyncedVisitors.length === 0) {
@@ -524,12 +725,34 @@ export const syncVisitors = async (): Promise<{
     let failedCount = 0;
 
     // Process in batches of 5 to avoid memory issues
-    const BATCH_SIZE = 5;
+    const totalRecords = unsyncedVisitors.length;
+    const BATCH_SIZE = totalRecords > 100 ? 20 : totalRecords > 50 ? 10 : 5;
+
     for (let i = 0; i < unsyncedVisitors.length; i += BATCH_SIZE) {
       const batch = unsyncedVisitors.slice(i, i + BATCH_SIZE);
 
       // Process each visitor individually
       const syncPromises = batch.map(async (visitor) => {
+        // Skip if backoff period hasn't elapsed
+        const now = Date.now();
+        if (
+          visitor.lastSyncAttempt &&
+          now - visitor.lastSyncAttempt < 2 * 60_000
+        ) {
+          console.log(`Skipping ${visitor.recordUuid} due to back-off`);
+          //return false;
+        }
+
+        // Skip if too many retries (prevent infinite loops)
+        if ((visitor.syncRetryCount ?? 0) >= 5) {
+          console.log(
+            `Max retries reached for ${visitor.recordUuid}, retrying anyway`
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, (visitor.syncRetryCount ?? 0) * 2000)
+          );
+        }
+
         try {
           const visitorData = await prepareVisitorForSync(visitor);
           if (!visitorData) {
@@ -542,45 +765,84 @@ export const syncVisitors = async (): Promise<{
           console.log(
             `[SYNC] Sending visitor ${visitor.recordUuid} with data:`,
             {
-              ...visitorData,
-              base64Length: visitorData.photo?.image_base64?.length,
+              created_datetime: visitorData.created_datetime,
+              //  base64Length: visitorData.photo?.image_base64?.length,
             }
           );
+          const ownerId = visitor.createdByUserId;
 
           // Send to API
-          const response = await axiosInstance.post(API_ENDPOINT, visitorData);
+          const response = await axiosInstance.post(
+            API_ENDPOINT,
+            visitorData,
+            {}
+          );
 
-          // Check if UUID was processed successfully
-          if (
-            response.data &&
-            Array.isArray(response.data.processed_uuids) &&
-            response.data.processed_uuids.includes(visitor.recordUuid)
-          ) {
-            // Update the record
+          if (response.status === 200 || response.status === 201) {
+            const serverId =
+              response.data?.id ||
+              response.data?.visitor_id ||
+              response.data?.data?.id ||
+              null;
+
+            // Mark as synced
             await database.write(async () => {
               await visitor.update((v: Visitor) => {
                 v.visitorSyncStatus = "synced";
+                v.isSynced = true;
+                v.syncRetryCount = 0;
+                v.lastSyncAttempt = null;
+                if (serverId) v.serverId = serverId;
               });
             });
+
+            console.log(`✅ Synced visitor ${visitor.recordUuid}`);
             return true;
-          } else if (response.data && response.data.errors) {
-            console.warn(
-              `Error syncing visitor ${visitor.recordUuid}:`,
-              response.data.errors
+          } else {
+            throw new Error(
+              `Unexpected status ${response.status} for ${visitor.recordUuid}`
             );
-            return false;
           }
-          return false;
         } catch (error: any) {
+          console.error(
+            `❌ [SYNC ERROR] Visitor ${visitor.recordUuid}:`,
+            error
+          );
+
+          // ✅ Handle UUID already exists - this is actually SUCCESS
+          if (isDuplicateUuidError(error)) {
+            console.log(
+              `🎯 Visitor ${visitor.recordUuid} already exists on server - marking as synced`
+            );
+
+            await database.write(async () => {
+              await visitor.update((v: Visitor) => {
+                v.visitorSyncStatus = "synced";
+                v.isSynced = true;
+                v.syncRetryCount = 0;
+                v.lastSyncAttempt = null;
+              });
+            });
+
+            return true; // This is a success!
+          }
+
+          // For other errors, record retry attempt
+          await database.write(async () => {
+            await visitor.update((v) => {
+              v.syncRetryCount = (v.syncRetryCount ?? 0) + 1;
+              v.lastSyncAttempt = Date.now();
+            });
+          });
+
           const axiosError = error as {
             response?: { data?: any; status?: number };
             message: string;
           };
-          const errors = axiosError.response?.data?.errors;
 
+          const errors = axiosError.response?.data?.errors;
           if (Array.isArray(errors)) {
             errors.forEach((err: any) => {
-              // If err.error is a string, show that; otherwise stringify the entire object
               const msg =
                 typeof err.error === "string"
                   ? err.error
@@ -591,7 +853,6 @@ export const syncVisitors = async (): Promise<{
               );
             });
           } else {
-            // Nothing in response.data.errors, fall back to raw body or message
             console.error(
               `[SYNC ERROR] Visitor ${visitor.recordUuid}:`,
               axiosError.response?.data ?? axiosError.message
@@ -605,10 +866,7 @@ export const syncVisitors = async (): Promise<{
       const results = await Promise.all(syncPromises);
 
       // Count successes and failures
-      results.forEach((success) => {
-        if (success) syncedCount++;
-        else failedCount++;
-      });
+      results.forEach((r) => (r ? syncedCount++ : failedCount++));
 
       // Allow a small delay between batches to prevent UI freezing
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -617,6 +875,9 @@ export const syncVisitors = async (): Promise<{
     // Clean up old images after sync is complete
     await cleanupOldImages();
 
+    console.log(
+      `🏁 Sync completed: ${syncedCount} synced, ${failedCount} failed`
+    );
     return { success: true, syncedCount, failedCount };
   } catch (error) {
     console.error("Error during visitor sync:", error);
@@ -665,11 +926,7 @@ export const cleanupOldImages = async (): Promise<void> => {
     for (const path of imagePaths) {
       if (!activeFilePaths.includes(path)) {
         const fileInfo = await FileSystem.getInfoAsync(path);
-        if (
-          fileInfo.exists &&
-          fileInfo.modificationTime &&
-          fileInfo.modificationTime < oneHourAgo
-        ) {
+        if (fileInfo.exists) {
           filesToDelete.push(path);
         }
       }

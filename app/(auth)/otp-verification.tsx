@@ -21,11 +21,16 @@ import {
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
-import { LinearGradient } from "expo-linear-gradient";
+import LinearGradient from "react-native-linear-gradient";
 import { useFonts } from "expo-font";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import { AxiosError } from "axios";
 import axiosInstance from "../api/axiosInstance";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  UniversalDialogProvider,
+  useUniversalDialog,
+} from "@/src/utility/UniversalDialogProvider";
 
 const { width, height } = Dimensions.get("window");
 
@@ -34,7 +39,7 @@ type Props = {};
 
 const otpVerification = (props: Props) => {
   const { email } = useLocalSearchParams(); // Retrieve email param
-
+  const showDialog = useUniversalDialog();
   const [otp, setOTP] = useState<string>("");
   const [otpError, setOtpError] = useState<string | null>(null);
   const [isOTPValid, setIsOTPValid] = useState<boolean>(true);
@@ -167,9 +172,31 @@ const otpVerification = (props: Props) => {
 
       console.log("OTP Verified Successfully:", response.data);
 
-      Alert.alert("Success", "Your password has been reset!", [
-        { text: "OK", onPress: () => router.replace("/login") }, // Navigate to login
-      ]);
+      showDialog({
+        title: "Success",
+        message: "Your password has been reset!",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: async () => {
+              try {
+                await AsyncStorage.setItem(
+                  "credentials",
+                  JSON.stringify({ email, password })
+                );
+                console.log(
+                  "🔐 New password saved to AsyncStorage after reset"
+                );
+              } catch (e) {
+                console.error("❌ Failed to store new password:", e);
+              }
+
+              router.replace("/login");
+            },
+          },
+        ],
+      });
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ submit?: string }>;
 
@@ -194,7 +221,17 @@ const otpVerification = (props: Props) => {
       }
 
       console.error("OTP Verification Failed:", errorMessage);
-      Alert.alert("Error", errorMessage);
+      showDialog({
+        title: "Error",
+        message: errorMessage,
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes the dialog
+          },
+        ],
+      });
     } finally {
       setIsLoading(false);
     }
@@ -235,7 +272,17 @@ const otpVerification = (props: Props) => {
 
       console.log("OTP Resent Successfully:", response.data);
 
-      Alert.alert("Success", "A new OTP has been sent to your email.");
+      showDialog({
+        title: "Success",
+        message: "A new OTP has been sent to your email.",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes the dialog
+          },
+        ],
+      });
 
       // Reset the resend timer
       setResendTimer(120); // 2 minutes
@@ -260,7 +307,17 @@ const otpVerification = (props: Props) => {
       }
 
       console.error("Resend OTP Failed:", errorMessage);
-      Alert.alert("Error", errorMessage);
+      showDialog({
+        title: "Error",
+        message: errorMessage,
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes the dialog
+          },
+        ],
+      });
     } finally {
       setIsLoading(false);
     }
@@ -292,7 +349,7 @@ const otpVerification = (props: Props) => {
               />
             </View>
 
-            <Text style={styles.welcomeText}>Forget Password</Text>
+            <Text style={styles.welcomeText}>Forgot Password</Text>
             <Text style={styles.infoText}>Enter your email to continue</Text>
 
             {/* <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} /> */}

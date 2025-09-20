@@ -18,13 +18,18 @@ import {
 } from "react-native";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
+import LinearGradient from "react-native-linear-gradient";
 import { changePassword } from "../api/auth";
 import { useAppDispatch } from "../store/hooks";
 import { logout } from "../store/slices/authSlice";
 import database from "../database";
 import User from "../database/models/User";
 import { Q } from "@nozbe/watermelondb";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  UniversalDialogProvider,
+  useUniversalDialog,
+} from "@/src/utility/UniversalDialogProvider";
 
 const { width, height } = Dimensions.get("window");
 
@@ -33,6 +38,7 @@ const ChangePasswordScreen = () => {
   const [oldPassword, setOldPassword] = useState("");
   const [OldPasswordError, setOldPasswordError] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const showDialog = useUniversalDialog();
 
   const [isOldPasswordValid, setIsOldPasswordValid] = useState<boolean>(true);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -68,17 +74,50 @@ const ChangePasswordScreen = () => {
   const handlePasswordChange = async () => {
     // Basic validation
     if (!oldPassword || !newPassword || !confirmPassword) {
-      Alert.alert("Error", "All fields are required");
+      showDialog({
+        title: "Error",
+        message: "All fields are required.",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes dialog
+          },
+        ],
+      });
+
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      Alert.alert("Error", "New password and confirm password do not match");
+      showDialog({
+        title: "Error",
+        message: "New password and confirm password do not match",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes dialog
+          },
+        ],
+      });
+
       return;
     }
 
     if (newPassword.length < 8) {
-      Alert.alert("Error", "New password must be at least 8 characters long");
+      showDialog({
+        title: "Error",
+        message: "New password must be at least 8 characters long",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes dialog
+          },
+        ],
+      });
+
       return;
     }
 
@@ -102,26 +141,53 @@ const ChangePasswordScreen = () => {
         }
       });
 
-      Alert.alert(
-        "Success",
-        "Password changed successfully. You will be logged out.",
-        [
+      showDialog({
+        title: "Success",
+        message: "Password changed successfully. You will be logged out.",
+        actions: [
           {
-            text: "OK",
-            onPress: () => {
-              // Dispatch logout action
+            label: "OK",
+            mode: "contained",
+            onPress: async () => {
+              try {
+                const saved = await AsyncStorage.getItem("credentials");
+                if (saved) {
+                  const { email } = JSON.parse(saved);
+
+                  // Overwrite the stored credentials with the new password
+                  await AsyncStorage.setItem(
+                    "credentials",
+                    JSON.stringify({ email, password: newPassword })
+                  );
+                  console.log(
+                    "🔐 Password updated in AsyncStorage after change"
+                  );
+                }
+              } catch (err) {
+                console.error("❌ Failed to update password in storage:", err);
+              }
+
               dispatch(logout());
-              // Navigate back to login
               router.replace("/");
             },
           },
-        ]
-      );
+        ],
+      });
     } catch (error: any) {
       const errorMessage =
         error.response?.data?.message ||
         "Failed to change password. Please try again.";
-      Alert.alert("Error", errorMessage);
+      showDialog({
+        title: "Error",
+        message: errorMessage,
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes the dialog
+          },
+        ],
+      });
     } finally {
       setIsLoading(false);
     }
@@ -413,7 +479,7 @@ const ChangePasswordScreen = () => {
               />
             </View> */}
 
-            <View style={styles.inputContainer}>
+            <View style={[styles.inputContainer, { marginBottom: 30 }]}>
               <PaperTextInput
                 label={
                   <Text
@@ -510,7 +576,7 @@ const ChangePasswordScreen = () => {
                   end={{ x: -0.2, y: 2 }}
                   style={styles.linearGradient}
                 >
-                  <Text style={styles.signInButtonText}>Change Password</Text>
+                  <Text style={styles.signInButtonText}>Change</Text>
                 </LinearGradient>
               )}
             </TouchableOpacity>

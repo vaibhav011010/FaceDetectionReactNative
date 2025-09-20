@@ -6,5 +6,6 @@ export default class Company extends Model {
 
   @field("tenant_id") tenantId!: number; // Store tenant ID
   @text("tenant_name") tenantName!: string;
+  @field("tenant_unit_number") tenantUnitNumber!: string;
   @text("user_id") userId!: string;
 }

@@ -2,6 +2,7 @@
 
 buildscript {
     ext {
+         isAppModule = true
         buildToolsVersion = findProperty('android.buildToolsVersion') ?: '33.0.0'
         minSdkVersion = Integer.parseInt(findProperty('android.minSdkVersion') ?: '26')
         compileSdkVersion = Integer.parseInt(findProperty('android.compileSdkVersion') ?: '34')
@@ -11,8 +12,8 @@ buildscript {
         ndkVersion = "26.1.10909125"
     }
     repositories {
-        google()
         mavenCentral()
+         google()
     }
     dependencies {
         classpath('com.android.tools.build:gradle')
@@ -21,7 +22,7 @@ buildscript {
     }
 }
 
-apply plugin: "com.facebook.react.rootproject"
+//apply plugin: "com.facebook.react.rootproject"
 
 allprojects {
     repositories {

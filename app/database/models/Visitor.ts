@@ -15,4 +15,8 @@ export default class Visitor extends Model {
   @field("record_uuid") recordUuid!: string;
   @field("visitor_sync_status") visitorSyncStatus!: "synced" | "not_synced";
   @field("visitor_photo_name") visitorPhotoName!: string;
+  @field("created_by_user_id") createdByUserId!: number;
+  @field("last_sync_attempt") lastSyncAttempt!: number | null;
+  @field("sync_retry_count") syncRetryCount!: number | null;
+  @field("created_datetime") createdDatetime!: string;
 }

@@ -32,7 +32,7 @@ export default function SplashScreen() {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
-        backgroundColor: "white",
+        backgroundColor: "#FAFAFA",
       }}
     ></View>
   );

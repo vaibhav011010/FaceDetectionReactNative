@@ -21,7 +21,7 @@ import {
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { LoginContext } from "../context/LoginContext"; // Make sure this path matches your project structure
-import { LinearGradient } from "expo-linear-gradient";
+import LinearGradient from "react-native-linear-gradient";
 import { useFonts } from "expo-font";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import {
@@ -34,6 +34,11 @@ import {
   selectAuthLoading,
 } from "../store/slices/authSlice";
 import axiosInstance from "../api/axiosInstance";
+import {
+  UniversalDialogProvider,
+  useUniversalDialog,
+} from "@/src/utility/UniversalDialogProvider";
+
 import { setIsLoading } from "../store/slices/visitorSlice";
 
 const { width, height } = Dimensions.get("window");
@@ -47,6 +52,7 @@ const forgotPassword = (props: Props) => {
   const isEmailValid = useAppSelector(selectIsForgotPasswordEmailValid);
   const emailError = useAppSelector(selectForgotPasswordEmailError);
   const dispatch = useAppDispatch();
+  const showDialog = useUniversalDialog();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const mobileFontSize = 14;
@@ -110,34 +116,86 @@ const forgotPassword = (props: Props) => {
         if (error.response.status === 400) {
           // Check if there's an email-specific error
           if (error.response.data && error.response.data.email) {
-            Alert.alert("Error", error.response.data.email);
+            showDialog({
+              title: "Error",
+              message:
+                error?.response?.data?.email || "An unknown error occurred.",
+              actions: [
+                {
+                  label: "OK",
+                  mode: "contained",
+                  onPress: () => {}, // closes dialog
+                },
+              ],
+            });
+
             dispatch(setForgotPasswordEmailError(error.response.data.email));
           } else {
             // General API error message
             const errorMessage =
               error.response.data.message || "Invalid email. Please try again.";
-            Alert.alert("Error", errorMessage);
+            showDialog({
+              title: "Error",
+              message: errorMessage,
+              actions: [
+                {
+                  label: "OK",
+                  mode: "contained",
+                  onPress: () => {}, // closes dialog
+                },
+              ],
+            });
+
             dispatch(setForgotPasswordEmailError(errorMessage));
           }
         } else {
           // Handle other HTTP errors
-          Alert.alert("Error", "Server error. Please try again later.");
+          showDialog({
+            title: "Error",
+            message: "Server error. Please try again later.",
+            actions: [
+              {
+                label: "OK",
+                mode: "contained",
+                onPress: () => {}, // closes dialog
+              },
+            ],
+          });
+
           dispatch(
             setForgotPasswordEmailError("Server error. Please try again later.")
           );
         }
       } else if (error.request) {
         // Handle network errors (request made but no response)
-        Alert.alert(
-          "Network Error",
-          "Please check your internet connection and try again."
-        );
+        showDialog({
+          title: "Network Error",
+          message: "Please check your internet connection and try again.",
+          actions: [
+            {
+              label: "OK",
+              mode: "contained",
+              onPress: () => {}, // closes dialog
+            },
+          ],
+        });
         dispatch(
           setForgotPasswordEmailError("Network error. Please try again.")
         );
       } else {
         // Handle other errors
-        Alert.alert("Error", "An unexpected error occurred. Please try again.");
+        showDialog({
+          title: "Error",
+          message: "An unexpected error occurred. Please try again.",
+          actions: [
+            {
+              label: "OK",
+              mode: "contained",
+              onPress: () => {}, // closes dialog
+            },
+          ],
+        });
+
         dispatch(setForgotPasswordEmailError("An unexpected error occurred."));
       }
     } finally {
@@ -189,7 +247,7 @@ const forgotPassword = (props: Props) => {
               />
             </View>
 
-            <Text style={styles.welcomeText}>Forget Password</Text>
+            <Text style={styles.welcomeText}>Forgot Password</Text>
             <Text style={styles.infoText}>Enter your email to continue</Text>
 
             {/* <Button title="Debug: Fetch Stored User" onPress={debugFetchUser} /> */}

@@ -18,10 +18,12 @@ import {
   Modal,
   Alert,
   Animated,
+  InteractionManager,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { TextInput as PaperTextInput } from "react-native-paper";
 import { selectUser } from "../store/slices/authSlice";
+import NetInfo from "@react-native-community/netinfo";
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useDispatch, useSelector } from "react-redux";
@@ -32,7 +34,7 @@ import {
   clearVisitorName,
   clearVisitorMobile,
   clearVisitingCompany,
-  fetchCompanies,
+  searchCompanies,
   selectCompany,
   setCompanyDropdownVisible,
   submitVisitorForm,
@@ -53,6 +55,7 @@ import {
   selectVisitorNameError,
   selectCompanyError,
   loadInitialCompanies,
+  forceRefreshCompanies,
 } from "../store/slices/visitorSlice";
 import { AppDispatch, RootState } from "../store";
 import StarIcon from "@/src/utility/starIcon";
@@ -60,7 +63,41 @@ import NextSvg from "@/src/utility/nextSvg";
 
 const { width, height } = Dimensions.get("window");
 export const isTablet = width >= 768;
+const windowWidth = Dimensions.get("window").width;
 
+const useResponsiveDimensions = () => {
+  const [dimensions, setDimensions] = useState(() => {
+    const window = Dimensions.get("window");
+    const screen = Dimensions.get("screen");
+    return {
+      windowWidth: window.width,
+      windowHeight: window.height,
+      screenHeight: screen.height, // Full screen height
+    };
+  });
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener(
+      "change",
+      ({ window, screen }) => {
+        setDimensions({
+          windowWidth: window.width,
+          windowHeight: window.height,
+          screenHeight: screen.height,
+        });
+      }
+    );
+
+    return () => subscription?.remove();
+  }, []);
+
+  return {
+    ...dimensions,
+    actualHeight: dimensions.screenHeight, // Use this for full height
+    isLandscape: dimensions.windowWidth > dimensions.windowHeight,
+    isTablet: Math.min(dimensions.windowWidth, dimensions.windowHeight) >= 768,
+  };
+};
 export default function VisitorFormScreen() {
   const router = useRouter();
   const user = useSelector(selectUser);
@@ -68,7 +105,8 @@ export default function VisitorFormScreen() {
   const { fontScale } = useWindowDimensions();
   const mobileFontSize = 14;
   const tabletFontSize = 17;
-
+  const { windowWidth, windowHeight, isLandscape, isTablet, screenHeight } =
+    useResponsiveDimensions();
   const responsiveFontSize = isTablet
     ? tabletFontSize / fontScale
     : mobileFontSize / fontScale;
@@ -79,6 +117,7 @@ export default function VisitorFormScreen() {
   const isMobileValid = useSelector(selectIsMobileValid);
   const scrollViewRef = useRef<ScrollView>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [apiFailed, setApiFailed] = useState(false);
 
   const slideAnim = useRef(new Animated.Value(0)).current;
   const currentSlide = useRef(new Animated.Value(0)).current;
@@ -102,6 +141,7 @@ export default function VisitorFormScreen() {
   const visitorMobile = useSelector(selectVisitorMobile);
   // const visitingCompany = useSelector(selectVisitingCompany);
   const isLoading = useSelector(selectIsLoading);
+  const [isRefreshing, setIsRefreshing] = useState(false); // ← New state for pull-to-refresh
 
   // const isLoadingCompanies = useSelector(selectIsLoadingCompanies);
   //const filteredCompanies = useSelector(selectFilteredCompanies);
@@ -109,6 +149,13 @@ export default function VisitorFormScreen() {
   const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(
     null
   );
+  useEffect(() => {
+    console.log("isReady:", isReady);
+  }, [isReady]);
+
+  useEffect(() => {
+    console.log("Redux loading flags:", { isLoading, isLoadingCompanies });
+  }, [isLoading, isLoadingCompanies]);
   // Add this at the top of your VisitorFormScreen component
   useEffect(() => {
     // Make sure user exists before trying to access its properties
@@ -123,30 +170,30 @@ export default function VisitorFormScreen() {
     if (text.trim().length > 0) {
       dispatch(setCompanyError(null));
     }
-    setDisplayCompanyName(text); // Update display text
+
+    setDisplayCompanyName(text);
     dispatch(setVisitingCompany(text as any));
     setIsCompanySelected(false);
 
-    // Clear any previous timer
+    // Clear previous timeout
     if (searchTimeout) {
       clearTimeout(searchTimeout);
     }
 
-    // Set a new timer to call API after a delay (300ms)
+    // Debounce search
     const timeout = setTimeout(() => {
       if (user) {
-        const userIdString = user.id.toString();
-        dispatch(fetchCompanies(text, userIdString));
+        // Always search in database only - no API calls during search
+        dispatch(searchCompanies(text, user.id.toString()));
+        dispatch(setCompanyDropdownVisible(true));
       }
-      // Optionally, show dropdown when results come in
-      dispatch(setCompanyDropdownVisible(true));
     }, 300);
+
     setSearchTimeout(timeout);
   };
 
-  // Add this effect to your component
+  // Show dropdown when filtered companies change
   useEffect(() => {
-    // When filtered companies change and there are results, show the dropdown
     if (
       filteredCompanies.length > 0 &&
       typeof visitingCompany === "string" &&
@@ -188,35 +235,42 @@ export default function VisitorFormScreen() {
   // When company field gets focus, scroll to it
   const handleCompanyFocus = () => {
     dispatch(setCompanyDropdownVisible(true));
+
     if (!displayCompanyName.trim()) {
-      console.log("Company field focused, loading initial companies");
+      // Show all companies from database when field is focused
+      console.log("Company field focused, showing all companies from database");
       if (user) {
-        // Convert to string because your functions expect userId as string
-        const userIdString = user.id.toString();
-        dispatch(loadInitialCompanies(userIdString));
+        // Search with empty string shows all companies
+        dispatch(searchCompanies("", user.id.toString()));
       }
     } else if (displayCompanyName.trim()) {
-      // If there's already text, trigger a search
-      console.log("Company field focused with text, triggering search");
+      // Search existing text in database
       if (user) {
-        console.log(`Searching companies for user ID: ${user.id}`, {
-          searchTerm: displayCompanyName,
-          user: user,
-        });
-
-        const userIdString = user.id.toString();
-        dispatch(fetchCompanies(displayCompanyName, userIdString));
-      } else {
-        console.warn("Cannot search companies: No user found in state");
+        dispatch(searchCompanies(displayCompanyName, user.id.toString()));
       }
     }
 
+    // Scroll to make dropdown visible
     if (scrollViewRef.current) {
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
   };
+  const handleRefreshCompanies = async () => {
+    if (user) {
+      setIsRefreshing(true);
+      try {
+        await dispatch(forceRefreshCompanies(user.id.toString()));
+        console.log("Companies refreshed successfully");
+      } catch (error) {
+        console.error("Failed to refresh companies:", error);
+      } finally {
+        setIsRefreshing(false);
+      }
+    }
+  };
+
   // Validate form fields
   const validateFields = (): boolean => {
     let isValid = true;
@@ -277,15 +331,22 @@ export default function VisitorFormScreen() {
   };
 
   // Make sure this function is being called when a company is selected from the dropdown
-  const handleSelectCompany = (company: { label: string; value: any }) => {
+  const handleSelectCompany = (company: {
+    label: string;
+    value: any;
+    tenantUnitNumber: string;
+  }) => {
     console.log("Selected company:", company);
     Keyboard.dismiss();
     setDisplayCompanyName(company.label);
     setIsCompanySelected(true);
+    dispatch(setCompanyError(null));
+
     dispatch(
       selectCompany({
         label: company.label,
         value: company.value, // Ensure it's a string
+        tenantUnitNumber: company.tenantUnitNumber,
       })
     );
     // Hide the dropdown immediately
@@ -311,7 +372,12 @@ export default function VisitorFormScreen() {
   };
 
   const confirmCancel = () => {
+    setApiFailed(false); // 👈 Reset here if needed
     setShowCancelModal(false);
+    dispatch(setCompanyError(null));
+    dispatch(setMobileError(null));
+    dispatch(setVisitorNameError(null));
+    dispatch(setCompanyDropdownVisible(false));
     // Reset visitor form state by dispatching the resetForm or clear actions
     dispatch(clearVisitorName());
     dispatch(clearVisitorMobile());
@@ -324,11 +390,12 @@ export default function VisitorFormScreen() {
     setShowCancelModal(true);
   };
   useEffect(() => {
-    // Simulate asset loading or do your async preloading here
-    // e.g., Promise.all([loadAssets(), loadData()]).then(() => setIsReady(true));
-    setTimeout(() => setIsReady(true), 500); // temporary example delay
-  }, []);
+    setIsReady(false);
 
+    InteractionManager.runAfterInteractions(() => {
+      setIsReady(true);
+    });
+  }, []);
   if (!isReady) {
     return (
       <View style={styles.loadingContainer1}>
@@ -340,338 +407,489 @@ export default function VisitorFormScreen() {
     const scaleFactor = width / 375; // Standard iPhone width as base
     return baseSize * scaleFactor;
   };
+  const responsiveStyles = StyleSheet.create({
+    screen: {
+      width: windowWidth,
+      height: screenHeight,
+      backgroundColor: "#EEF2F6",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    borderContainer: {
+      width: windowWidth,
+      height: windowHeight,
+    },
+  });
+  const additionalStyles = StyleSheet.create({
+    refreshHeader: {
+      backgroundColor: "#f8f9fa",
+      borderBottomWidth: 1,
+      borderBottomColor: "#e9ecef",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+    },
+    refreshHeaderContent: {
+      alignItems: "center",
+    },
+    refreshHeaderText: {
+      fontSize: responsiveFontSize,
+      color: "#03045E",
+      fontFamily: "OpenSans_Condensed-Regular",
+      fontWeight: "600",
+    },
+    refreshHeaderSubText: {
+      fontSize: responsiveFontSize - 2,
+      color: "#6c757d",
+      fontFamily: "OpenSans_Condensed-Regular",
+      marginTop: 2,
+    },
+    loadingDropdown: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingVertical: 20,
+      paddingHorizontal: 16,
+    },
+    loadingText: {
+      marginLeft: 8,
+      fontSize: responsiveFontSize,
+      color: "#03045E",
+      fontFamily: "OpenSans_Condensed-Regular",
+    },
+    noResultsContainer: {
+      paddingVertical: 20,
+      paddingHorizontal: 16,
+      alignItems: "center",
+    },
+    noResultsText: {
+      fontSize: responsiveFontSize,
+      color: "#6c757d",
+      fontFamily: "OpenSans_Condensed-Regular",
+      textAlign: "center",
+      fontWeight: "500",
+    },
+    noResultsSubText: {
+      fontSize: responsiveFontSize - 2,
+      color: "#adb5bd",
+      fontFamily: "OpenSans_Condensed-Regular",
+      textAlign: "center",
+      marginTop: 4,
+    },
+    dropdownItemContent: {
+      flex: 1,
+      marginRight: 8,
+    },
+    dropdownText: {
+      fontSize: responsiveFontSize,
+      color: "#03045E",
+      fontFamily: "OpenSans_Condensed-Regular",
+      fontWeight: "500",
+      marginBottom: 2,
+    },
+    dropdownIdText: {
+      fontSize: responsiveFontSize - 2,
+      color: "#6c757d",
+      fontFamily: "OpenSans_Condensed-Regular",
+    },
+    dropdownItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: "#f8f9fa",
+      backgroundColor: "#fff",
+    },
+    emptyStateContainer: {
+      paddingVertical: 20,
+      paddingHorizontal: 16,
+      alignItems: "center",
+    },
+    emptyStateText: {
+      fontSize: responsiveFontSize,
+      color: "#6c757d",
+      fontFamily: "OpenSans_Condensed-Regular",
+      textAlign: "center",
+    },
+    emptyStateSubText: {
+      fontSize: responsiveFontSize - 2,
+      color: "#adb5bd",
+      fontFamily: "OpenSans_Condensed-Regular",
+      textAlign: "center",
+      marginTop: 4,
+    },
+  });
 
   return (
-    <KeyboardAvoidingView
-      style={styles.keyboardAvoidingView} // important: flex: 1
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
-    >
-      <TouchableWithoutFeedback onPress={handleScreenPress}>
-        <View style={styles.wrapper}>
-          <Animated.View
-            style={[
-              styles.screen,
-              { transform: [{ translateX: currentSlide }] },
-            ]}
-          >
-            <View style={styles.container2}>
-              <View
-                style={[
-                  styles.borderContainer,
-                  { width: width, height: height },
-                ]}
-              >
-                <View style={styles.container}>
-                  <ScrollView
-                    ref={scrollViewRef}
-                    style={styles.scrollView}
-                    contentContainerStyle={styles.scrollViewContent}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                  >
-                    <View style={styles.formContainer}>
-                      <Modal
-                        visible={showCancelModal}
-                        transparent={true}
-                        animationType="fade"
-                      >
-                        <View style={styles.modalOverlay}>
-                          <View style={styles.modalContainer}>
-                            <View style={styles.modalHeader}>
-                              <Text style={styles.modalTitle}>
-                                Confirm Cancel
+    <SafeAreaView style={styles.safeAreaContainer}>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingView} // important: flex: 1
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+      >
+        <TouchableWithoutFeedback onPress={handleScreenPress}>
+          <View style={styles.wrapper}>
+            <Animated.View
+              style={[
+                responsiveStyles.screen,
+                { transform: [{ translateX: currentSlide }] },
+              ]}
+            >
+              {/* <View style={styles.container2}> */}
+              <View style={[responsiveStyles.borderContainer]}>
+                {/* <View style={styles.container}> */}
+                <ScrollView
+                  ref={scrollViewRef}
+                  style={styles.scrollView}
+                  contentContainerStyle={styles.scrollViewContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.formContainer}>
+                    <Modal
+                      visible={showCancelModal}
+                      transparent={true}
+                      animationType="fade"
+                    >
+                      <View style={styles.modalOverlay}>
+                        <View style={styles.modalContainer}>
+                          <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>
+                              Confirm Cancel
+                            </Text>
+                          </View>
+                          <View style={styles.modalBody}>
+                            <Text style={styles.modalTextCancel}>
+                              Are you sure you want to cancel?
+                            </Text>
+                          </View>
+                          <View style={styles.modalFooter}>
+                            <TouchableOpacity
+                              style={[
+                                styles.modalButton,
+                                styles.modalCancelButton,
+                              ]}
+                              onPress={() => setShowCancelModal(false)}
+                            >
+                              <Text style={styles.modalCancelButtonText}>
+                                Cancel
                               </Text>
-                            </View>
-                            <View style={styles.modalBody}>
-                              <Text style={styles.modalTextCancel}>
-                                Are you sure you want to cancel?
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.modalButton,
+                                styles.modalConfirmButton,
+                              ]}
+                              onPress={confirmCancel}
+                            >
+                              <Text style={styles.modalConfirmButtonText}>
+                                Confirm
                               </Text>
-                            </View>
-                            <View style={styles.modalFooter}>
-                              <TouchableOpacity
-                                style={[
-                                  styles.modalButton,
-                                  styles.modalCancelButton,
-                                ]}
-                                onPress={() => setShowCancelModal(false)}
-                              >
-                                <Text style={styles.modalCancelButtonText}>
-                                  Cancel
-                                </Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={[
-                                  styles.modalButton,
-                                  styles.modalConfirmButton,
-                                ]}
-                                onPress={confirmCancel}
-                              >
-                                <Text style={styles.modalConfirmButtonText}>
-                                  Confirm
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
+                            </TouchableOpacity>
                           </View>
                         </View>
-                      </Modal>
-
-                      {/* Visitor Name Input */}
-                      <View style={styles.inputContainer}>
-                        <PaperTextInput
-                          left={
-                            <PaperTextInput.Icon
-                              icon="account"
-                              color="#03045E"
-                              size={22}
-                            />
-                          }
-                          label={
-                            <Text
-                              style={{
-                                color: "#03045E",
-                                fontFamily: "OpenSans_Condensed-Regular",
-                                fontSize: responsiveFontSize,
-                              }}
-                            >
-                              Visitor Name
-                            </Text>
-                          }
-                          textColor="#03045E"
-                          maxLength={50}
-                          value={visitorName}
-                          onChangeText={(text) => {
-                            const filteredText = text.replace(
-                              /[^a-zA-Z\s]/g,
-                              ""
-                            );
-                            dispatch(setVisitorName(filteredText));
-                            // Clear error when user starts typing a non-empty value
-                            if (filteredText.trim().length > 0) {
-                              dispatch(setVisitorNameError(null));
-                            }
-                          }}
-                          mode="outlined"
-                          outlineStyle={{
-                            borderWidth: 1,
-                            borderRadius: 5,
-                            borderColor: visitorNameError ? "red" : "#03045E",
-                          }}
-                          contentStyle={{
-                            paddingTop: 8, // Increased top padding for floating label
-                            paddingBottom: 8,
-                          }}
-                          style={[
-                            styles.textInput,
-                            visitorNameError && { borderColor: "red" },
-                          ]}
-                          theme={{
-                            colors: {
-                              primary: "#03045E",
-                              text: "#03045E",
-                              background: "#EEF2F6",
-                            },
-                          }}
-                          right={
-                            visitorName ? (
-                              <PaperTextInput.Icon
-                                icon="close-circle-outline"
-                                onPress={handleClearName}
-                                color="#03045E"
-                                size={20}
-                              />
-                            ) : null
-                          }
-                          selectionColor="#03045E"
-                        />
-                        {visitorNameError ? (
-                          <Text
-                            style={{
-                              color: "red",
-                              fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
-                              fontFamily: "OpenSans_Condensed-Regular",
-                            }}
-                          >
-                            {visitorNameError}
-                          </Text>
-                        ) : null}
                       </View>
+                    </Modal>
 
-                      {/* Visitor Mobile Input */}
-                      <View style={styles.inputContainer}>
-                        <PaperTextInput
-                          left={
+                    {/* Visitor Name Input */}
+                    <View style={styles.inputContainer}>
+                      <PaperTextInput
+                        left={
+                          <PaperTextInput.Icon
+                            icon="account"
+                            color="#03045E"
+                            size={22}
+                          />
+                        }
+                        label={
+                          <Text
+                            style={{
+                              color: "#03045E",
+                              fontFamily: "OpenSans_Condensed-Regular",
+                              fontSize: responsiveFontSize,
+                            }}
+                          >
+                            Visitor Name
+                          </Text>
+                        }
+                        textColor="#03045E"
+                        maxLength={50}
+                        value={visitorName}
+                        onChangeText={(text) => {
+                          //  const filteredText = text.replace(/[^a-zA-Z\s]/g, "");
+                          dispatch(setVisitorName(text));
+                          // Clear error when user starts typing a non-empty value
+                          if (text.trim().length > 0) {
+                            dispatch(setVisitorNameError(null));
+                          }
+                        }}
+                        mode="outlined"
+                        outlineStyle={{
+                          borderWidth: 1,
+                          borderRadius: 5,
+                          borderColor: visitorNameError ? "red" : "#03045E",
+                        }}
+                        contentStyle={{
+                          paddingTop: 8, // Increased top padding for floating label
+                          paddingBottom: 8,
+                        }}
+                        style={[
+                          styles.textInput,
+                          visitorNameError && { borderColor: "red" },
+                        ]}
+                        theme={{
+                          colors: {
+                            primary: "#03045E",
+                            text: "#03045E",
+                            background: "#EEF2F6",
+                          },
+                        }}
+                        right={
+                          visitorName ? (
                             <PaperTextInput.Icon
-                              icon="phone"
+                              icon="close-circle-outline"
+                              onPress={handleClearName}
                               color="#03045E"
                               size={22}
                             />
-                          }
-                          label={
-                            <Text
-                              style={{
-                                color: "#03045E",
-                                fontFamily: "OpenSans_Condensed-Regular",
-                                fontSize: responsiveFontSize,
-                              }}
-                            >
-                              Visitor Mobile
-                            </Text>
-                          }
-                          mode="outlined"
-                          textColor="#03045E"
-                          maxLength={10}
-                          value={visitorMobile}
-                          onChangeText={(text) => {
-                            const filteredText = text.replace(/[^0-9]/g, "");
-                            dispatch(setVisitorMobile(filteredText));
-                            // Clear mobile error when user types and input becomes non-empty
-                            if (
-                              filteredText.trim().length > 0 &&
-                              filteredText.length === 10
-                            ) {
-                              dispatch(setMobileError(null));
-                              dispatch(setIsMobileValid(true));
-                            }
+                          ) : null
+                        }
+                        selectionColor="#03045E"
+                      />
+                      {visitorNameError ? (
+                        <Text
+                          style={{
+                            color: "red",
+                            fontSize: responsiveFontSize - 2,
+                            marginLeft: 5,
+                            fontFamily: "OpenSans_Condensed-Regular",
                           }}
-                          outlineStyle={{
-                            borderWidth: 1,
-                            borderRadius: 5,
-                            borderColor: isMobileValid ? "#03045e" : "red",
-                          }}
-                          style={[
-                            styles.textInput,
-                            !isMobileValid && { borderColor: "red" },
-                          ]}
-                          theme={{
-                            colors: {
-                              primary: "#03045E",
-                              text: "#03045E",
-                              background: "#EEF2F6",
-                            },
-                          }}
-                          contentStyle={{
-                            paddingTop: 8, // Increased top padding for floating label
-                            paddingBottom: 8,
-                          }}
-                          keyboardType="phone-pad"
-                          right={
-                            visitorMobile ? (
-                              <PaperTextInput.Icon
-                                icon="close-circle-outline"
-                                onPress={handleClearMobile}
-                                color="#03045E"
-                                size={25}
-                              />
-                            ) : null
-                          }
-                          selectionColor="#03045E"
-                        />
-                        {mobileError ? (
+                        >
+                          {visitorNameError}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {/* Visitor Mobile Input */}
+                    <View style={styles.inputContainer}>
+                      <PaperTextInput
+                        left={
+                          <PaperTextInput.Icon
+                            icon="phone"
+                            color="#03045E"
+                            size={22}
+                          />
+                        }
+                        label={
                           <Text
                             style={{
-                              color: "red",
-                              fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
+                              color: "#03045E",
                               fontFamily: "OpenSans_Condensed-Regular",
+                              fontSize: responsiveFontSize,
                             }}
                           >
-                            {mobileError}
+                            Visitor Mobile Number
                           </Text>
-                        ) : null}
-                      </View>
-
-                      {/* Visiting Company Input with Dropdown */}
-                      <View style={styles.inputContainer}>
-                        <PaperTextInput
-                          left={
+                        }
+                        mode="outlined"
+                        textColor="#03045E"
+                        maxLength={10}
+                        value={visitorMobile}
+                        onChangeText={(text) => {
+                          const filteredText = text.replace(/[^0-9]/g, "");
+                          dispatch(setVisitorMobile(filteredText));
+                          // Clear mobile error when user types and input becomes non-empty
+                          if (
+                            filteredText.trim().length > 0 &&
+                            filteredText.length === 10
+                          ) {
+                            dispatch(setMobileError(null));
+                            dispatch(setIsMobileValid(true));
+                          }
+                        }}
+                        outlineStyle={{
+                          borderWidth: 1,
+                          borderRadius: 5,
+                          borderColor: isMobileValid ? "#03045e" : "red",
+                        }}
+                        style={[
+                          styles.textInput,
+                          !isMobileValid && { borderColor: "red" },
+                        ]}
+                        theme={{
+                          colors: {
+                            primary: "#03045E",
+                            text: "#03045E",
+                            background: "#EEF2F6",
+                          },
+                        }}
+                        contentStyle={{
+                          paddingTop: 8, // Increased top padding for floating label
+                          paddingBottom: 8,
+                        }}
+                        keyboardType="phone-pad"
+                        right={
+                          visitorMobile ? (
                             <PaperTextInput.Icon
-                              icon="office-building"
+                              icon="close-circle-outline"
+                              onPress={handleClearMobile}
                               color="#03045E"
                               size={22}
                             />
-                          }
-                          label={
-                            <Text
-                              style={{
-                                color: "#03045E",
-                                fontFamily: "OpenSans_Condensed-Regular",
-                                fontSize: responsiveFontSize,
-                              }}
-                            >
-                              Visiting Company
-                            </Text>
-                          }
-                          textColor="#03045E"
-                          value={displayCompanyName}
-                          onChangeText={handleCompanySearch}
-                          onFocus={handleCompanyFocus}
-                          mode="outlined"
-                          outlineStyle={{
-                            borderWidth: 1,
-                            borderRadius: 5,
-                            borderColor: companyError ? "red" : "#03045E",
+                          ) : null
+                        }
+                        selectionColor="#03045E"
+                      />
+                      {mobileError ? (
+                        <Text
+                          style={{
+                            color: "red",
+                            fontSize: responsiveFontSize - 2,
+                            marginLeft: 5,
+                            fontFamily: "OpenSans_Condensed-Regular",
                           }}
-                          style={[
-                            styles.textInput,
-                            companyError && { borderColor: "red" },
-                          ]}
-                          theme={{
-                            colors: {
-                              primary: "#03045E",
-                              text: "#03045E",
-                              background: "#EEF2F6",
-                            },
-                          }}
-                          contentStyle={{
-                            paddingTop: 8, // Increased top padding for floating label
-                            paddingBottom: 8,
-                          }}
-                          right={
-                            displayCompanyName ? (
-                              <PaperTextInput.Icon
-                                icon="close-circle-outline"
-                                onPress={handleClearCompany}
-                                color="#03045E"
-                                size={25}
-                              />
-                            ) : null
-                          }
-                          selectionColor="#03045E"
-                        />
-                        {companyError ? (
+                        >
+                          {mobileError}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {/* Visiting Company Input with Dropdown */}
+                    <View style={styles.inputContainer}>
+                      <PaperTextInput
+                        left={
+                          <PaperTextInput.Icon
+                            icon="office-building"
+                            color="#03045E"
+                            size={22}
+                          />
+                        }
+                        label={
                           <Text
                             style={{
-                              color: "red",
-                              fontSize: responsiveFontSize - 2,
-                              marginLeft: 5,
+                              color: "#03045E",
                               fontFamily: "OpenSans_Condensed-Regular",
+                              fontSize: responsiveFontSize,
                             }}
                           >
-                            {companyError}
+                            Visiting Company
                           </Text>
-                        ) : null}
-                        {/* Company Dropdown */}
-                        {showCompanyDropdown &&
-                          filteredCompanies.length > 0 && (
-                            <View
-                              style={[
-                                styles.dropdownContainer,
-                                { maxHeight: 200 },
-                              ]}
-                            >
-                              {isLoadingCompanies ? (
-                                <View style={styles.loadingDropdown}>
-                                  <ActivityIndicator
-                                    size="small"
-                                    color="#03045E"
-                                  />
+                        }
+                        textColor="#03045E"
+                        value={displayCompanyName}
+                        onChangeText={handleCompanySearch}
+                        onFocus={handleCompanyFocus}
+                        underlineStyle={{ display: "none" }}
+                        mode="outlined"
+                        outlineStyle={{
+                          borderWidth: 1,
+                          borderRadius: 5,
+                          borderColor: companyError ? "red" : "#03045E",
+                        }}
+                        style={[
+                          styles.textInput,
+                          companyError && { borderColor: "red" },
+                        ]}
+                        theme={{
+                          colors: {
+                            primary: "#03045E",
+                            text: "#03045E",
+                            background: "#EEF2F6",
+                            onSurfaceVariant: "transparent",
+                          },
+                        }}
+                        contentStyle={{
+                          paddingTop: 8, // Increased top padding for floating label
+                          paddingBottom: 8,
+                        }}
+                        right={
+                          displayCompanyName ? (
+                            <PaperTextInput.Icon
+                              icon="close-circle-outline"
+                              onPress={handleClearCompany}
+                              color="#03045E"
+                              size={22}
+                            />
+                          ) : null
+                        }
+                        selectionColor="#03045E"
+                      />
+                      {companyError ? (
+                        <Text
+                          style={{
+                            color: "red",
+                            fontSize: responsiveFontSize - 2,
+                            marginLeft: 5,
+                            fontFamily: "OpenSans_Condensed-Regular",
+                          }}
+                        >
+                          {companyError}
+                        </Text>
+                      ) : null}
+                      {/* Company Dropdown */}
+                      {showCompanyDropdown && (
+                        <View
+                          style={[styles.dropdownContainer, { maxHeight: 300 }]}
+                        >
+                          {/* Refresh Header */}
+                          <TouchableOpacity
+                            style={additionalStyles.refreshHeader}
+                            onPress={handleRefreshCompanies}
+                            disabled={isRefreshing}
+                          >
+                            <View style={additionalStyles.refreshHeaderContent}>
+                              <Text style={additionalStyles.refreshHeaderText}>
+                                {isRefreshing
+                                  ? "🔄 Refreshing..."
+                                  : "🔄 Refresh Companies"}
+                              </Text>
+                              <Text
+                                style={additionalStyles.refreshHeaderSubText}
+                              >
+                                Tap to get latest companies
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* Loading State */}
+                          {isLoadingCompanies ? (
+                            <>
+                              {console.log("Dropdown stuck loader showing")}
+                              <View style={additionalStyles.loadingDropdown}>
+                                <ActivityIndicator
+                                  size="small"
+                                  color="#03045E"
+                                />
+                                <Text style={additionalStyles.loadingText}>
+                                  Searching companies...
+                                </Text>
+                              </View>
+                            </>
+                          ) : (
+                            <>
+                              {/* No Results Message */}
+                              {filteredCompanies.length === 0 &&
+                              displayCompanyName.trim() ? (
+                                <View
+                                  style={additionalStyles.noResultsContainer}
+                                >
+                                  <Text style={additionalStyles.noResultsText}>
+                                    No companies found for "{displayCompanyName}
+                                    "
+                                  </Text>
+                                  <Text
+                                    style={additionalStyles.noResultsSubText}
+                                  >
+                                    Try searching by company name or unit number
+                                  </Text>
                                 </View>
                               ) : (
+                                /* Company List */
                                 <FlatList
                                   data={filteredCompanies}
-                                  keyExtractor={(item) => item.value}
+                                  keyExtractor={(item, index) =>
+                                    `${item.value}-${index}`
+                                  }
                                   keyboardShouldPersistTaps="handled"
                                   style={styles.dropdownList}
                                   nestedScrollEnabled={true}
@@ -681,22 +899,69 @@ export default function VisitorFormScreen() {
                                       style={styles.dropdownItem}
                                       onPress={() => handleSelectCompany(item)}
                                     >
-                                      <Text style={styles.dropdownText}>
-                                        {item.label}
-                                      </Text>
+                                      <View
+                                        style={
+                                          additionalStyles.dropdownItemContent
+                                        }
+                                      >
+                                        <Text
+                                          style={styles.dropdownText}
+                                          numberOfLines={2}
+                                        >
+                                          {item.label}
+                                        </Text>
+                                        <Text
+                                          style={
+                                            additionalStyles.dropdownIdText
+                                          }
+                                        >
+                                          Unit Number: {item.tenantUnitNumber}
+                                        </Text>
+                                      </View>
+                                      {/* <PaperTextInput.Icon
+                                        icon="chevron-right"
+                                        color="#03045E"
+                                        size={16}
+                                      /> */}
                                     </TouchableOpacity>
                                   )}
+                                  ListEmptyComponent={
+                                    !displayCompanyName.trim() ? (
+                                      <View
+                                        style={
+                                          additionalStyles.emptyStateContainer
+                                        }
+                                      >
+                                        <Text
+                                          style={
+                                            additionalStyles.emptyStateText
+                                          }
+                                        >
+                                          Start typing to search companies
+                                        </Text>
+                                        <Text
+                                          style={
+                                            additionalStyles.emptyStateSubText
+                                          }
+                                        >
+                                          Search by name or unit number
+                                        </Text>
+                                      </View>
+                                    ) : null
+                                  }
                                 />
                               )}
-                            </View>
+                            </>
                           )}
-                      </View>
-
-                      {/* Add empty space to ensure scrolling works well */}
-                      {showCompanyDropdown && filteredCompanies.length > 0 && (
-                        <View style={{ height: 160 }} />
+                        </View>
                       )}
-                      {/* 
+                    </View>
+
+                    {/* Add empty space to ensure scrolling works well */}
+                    {showCompanyDropdown && filteredCompanies.length > 0 && (
+                      <View style={{ height: 160 }} />
+                    )}
+                    {/* 
                       <View style={styles.buttonContainer}>
                         <TouchableOpacity
                           style={styles.cancelButton}
@@ -723,73 +988,77 @@ export default function VisitorFormScreen() {
                         </TouchableOpacity>
                       </View> */}
 
-                      <View style={styles.modalButtons}>
-                        <TouchableOpacity
-                          style={[
-                            styles.cancelButton,
-                            {
-                              width: "40%",
-                              height: getResponsiveSize(40),
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 10,
-                            },
-                          ]}
-                          onPress={handleCancel}
-                        >
-                          {/* <Ionicons
+                    <View style={styles.modalButtons}>
+                      <TouchableOpacity
+                        style={[
+                          styles.cancelButton,
+                          {
+                            width: "40%",
+                            height: getResponsiveSize(40),
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 10,
+                          },
+                        ]}
+                        onPress={handleCancel}
+                      >
+                        {/* <Ionicons
                             name="close-circle"
                             size={22}
                             color="#03045E"
                           /> */}
-                          <StarIcon />
-                          <Text style={styles.canceltext}>Cancel</Text>
-                        </TouchableOpacity>
-                        <View style={{ width: "15%" }} />
-                        <TouchableOpacity
-                          style={[
-                            styles.submitButton,
-                            {
-                              width: "40%",
-                              height: getResponsiveSize(40),
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 10,
-                            },
-                          ]}
-                          onPress={handleNext}
-                        >
-                          <Text style={styles.buttonText}>Next</Text>
-                          {/* <Ionicons
+                        <StarIcon />
+                        <Text style={styles.canceltext}>Cancel</Text>
+                      </TouchableOpacity>
+                      <View style={{ width: "5%" }} />
+                      <TouchableOpacity
+                        style={[
+                          styles.submitButton,
+                          {
+                            width: "40%",
+                            height: getResponsiveSize(40),
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 10,
+                          },
+                        ]}
+                        onPress={handleNext}
+                      >
+                        <Text style={styles.buttonText}>Next</Text>
+                        {/* <Ionicons
                             name="chevron-forward-outline"
                             size={22}
                             color="white"
                           /> */}
-                          <NextSvg />
-                        </TouchableOpacity>
-                      </View>
+                        <NextSvg />
+                      </TouchableOpacity>
                     </View>
-                    {isLoading && (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#03045E" />
-                      </View>
-                    )}
-                  </ScrollView>
-                </View>
+                  </View>
+                  {/* {isLoading && (
+                    <View style={styles.loadingContainer}>
+                      <ActivityIndicator size="large" color="#03045E" />
+                    </View>
+                  )} */}
+                </ScrollView>
+                {/* </View> */}
               </View>
-            </View>
-          </Animated.View>
-        </View>
-      </TouchableWithoutFeedback>
-    </KeyboardAvoidingView>
+              {/* </View> */}
+            </Animated.View>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
     flex: 1,
+    width: "100%",
+    height: "auto",
+    backgroundColor: "#EEF2F6",
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -813,8 +1082,7 @@ const styles = StyleSheet.create({
     marginTop: 50,
   },
   screen: {
-    flex: 1,
-    width: width,
+    width: windowWidth,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -859,7 +1127,7 @@ const styles = StyleSheet.create({
     // overflow: "hidden",
   },
   inputContainer: {
-    width: "95%",
+    width: "85%",
     marginVertical: 12,
     position: "relative",
   },

@@ -1,7 +1,7 @@
 // axiosBase.ts
 import axios from "axios";
 
-const API_BASE_URL = "https://webapptest1.site/";
+const API_BASE_URL = "https://quikcheckapi.site";
 
 const axiosBase = axios.create({
   baseURL: API_BASE_URL,

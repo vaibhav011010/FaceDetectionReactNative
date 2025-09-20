@@ -1,6 +1,6 @@
 // app/store/slices/visitorSlice.ts
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { RootState } from "../index"; // Assuming you have a store configuration
+import { createSlice, Dispatch, PayloadAction } from "@reduxjs/toolkit";
+import { AppDispatch, RootState } from "../index"; // Assuming you have a store configuration
 import axiosInstance from "../../api/axiosInstance"; // Adjust the path as needed
 import database from "../../database/index";
 import NetInfo from "@react-native-community/netinfo";
@@ -10,6 +10,7 @@ import { Q } from "@nozbe/watermelondb";
 interface CompanyOption {
   label: string;
   value: string;
+  tenantUnitNumber: string; // Add tenant unit number to the interface
 }
 
 interface VisitorState {
@@ -30,6 +31,8 @@ interface VisitorState {
   isMobileValid: boolean;
   visitorNameError: string | null;
   companyError: string | null;
+  allCompanies: CompanyOption[];
+  lastSyncTime: number | null; // Track last API sync
 }
 
 // Initial state (removed temporary company data)
@@ -37,7 +40,7 @@ const initialState: VisitorState = {
   visitorName: "",
   visitorMobile: "",
   visitingCompany: null,
-
+  allCompanies: [],
   photo: null,
   filteredCompanies: [],
   isLoading: false,
@@ -51,6 +54,7 @@ const initialState: VisitorState = {
   companyError: null,
   mobileError: null,
   isMobileValid: true,
+  lastSyncTime: null,
 };
 
 // Create the slice
@@ -84,6 +88,9 @@ const visitorSlice = createSlice({
     setPhoto: (state, action: PayloadAction<string>) => {
       state.photo = action.payload;
     },
+    setAllCompanies: (state, action: PayloadAction<CompanyOption[]>) => {
+      state.allCompanies = action.payload;
+    },
     clearVisitorName: (state) => {
       state.visitorName = "";
     },
@@ -101,6 +108,8 @@ const visitorSlice = createSlice({
       return {
         ...initialState,
         photo: null, // Explicitly nullify photo
+        allCompanies: state.allCompanies,
+        lastSyncTime: state.lastSyncTime,
       };
     },
     setCompanyDropdownVisible: (state, action: PayloadAction<boolean>) => {
@@ -183,6 +192,7 @@ export const {
   setCompanyError,
   syncSuccess,
   syncFailure,
+  setAllCompanies,
   clearSyncError,
 } = visitorSlice.actions;
 
@@ -219,57 +229,188 @@ export const selectIsMobileValid = (state: RootState) =>
 // Export reducer
 export default visitorSlice.reducer;
 
+// Helper function to save companies to DB with better error handling
+const saveCompaniesToDB = async (companies: any[], userId: string) => {
+  console.log(`Saving ${companies.length} companies for user ${userId} to DB`);
+
+  try {
+    await database.write(async () => {
+      const companiesCollection = database.get("companies");
+
+      // Clear existing companies for this user
+      const existingCompanies = await companiesCollection
+        .query(Q.where("user_id", userId))
+        .fetch();
+
+      for (const company of existingCompanies) {
+        await company.destroyPermanently();
+      }
+
+      // Create new records using proper WatermelonDB API
+      for (const comp of companies) {
+        try {
+          await companiesCollection.create((record: any) => {
+            record.tenantId = Number(comp.value); // Keep main ID
+            record.tenantName = comp.label;
+            record.tenantUnitNumber = comp.tenantUnitNumber; // Save tenant unit number
+            record.userId = String(userId);
+          });
+        } catch (createError) {
+          console.error(`Failed to create company: ${comp.label}`, createError);
+        }
+      }
+    });
+
+    console.log(`Successfully saved companies for user ${userId}`);
+  } catch (error) {
+    console.error(`Failed to save companies to DB:`, error);
+    throw error;
+  }
+};
+
+// Enhanced function to load companies from DB with better search support
+const loadCompaniesFromDB = async (
+  userId: string
+): Promise<CompanyOption[]> => {
+  try {
+    const companiesCollection = database.get("companies");
+    const localCompanies = await companiesCollection
+      .query(Q.where("user_id", String(userId)))
+      .fetch();
+
+    console.log(
+      `Loaded ${localCompanies.length} companies from DB for user ${userId}`
+    );
+
+    return localCompanies.map((comp: any) => ({
+      label: comp.tenantName,
+      value: String(comp.tenantId), // Keep main ID as value
+      tenantUnitNumber: comp.tenantUnitNumber, // Add tenant unit number
+      userId: comp.userId,
+    }));
+  } catch (error) {
+    console.error(`Error loading companies from DB for user ${userId}:`, error);
+    return [];
+  }
+};
+
+// Background API sync function
+const backgroundSyncCompanies = async (userId: string, dispatch: any) => {
+  try {
+    const isConnected = await NetInfo.fetch().then(
+      (state) => state.isConnected
+    );
+
+    if (!isConnected) {
+      console.log(
+        `Device offline, skipping background sync for user ${userId}`
+      );
+      return;
+    }
+
+    console.log(`Starting background sync for user ${userId}`);
+    dispatch(startSync());
+
+    const response = await axiosInstance.get(
+      "/visitors/tenant_visitor_dropdown/"
+    );
+    const companies = response.data || [];
+
+    // Updated mapping to include tenant_unit_number
+    const mappedCompanies = companies.map(
+      (company: {
+        id: number;
+        tenant_name: string;
+        tenant_unit_number: string;
+      }) => ({
+        label: company.tenant_name,
+        value: String(company.id), // Keep main ID
+        tenantUnitNumber: company.tenant_unit_number, // Add tenant unit number
+        userId: userId,
+      })
+    );
+
+    // Save to database
+    await saveCompaniesToDB(mappedCompanies, userId);
+
+    // Update Redux state
+    dispatch(setAllCompanies(mappedCompanies));
+    dispatch(syncSuccess());
+
+    console.log(`Background sync completed for user ${userId}`);
+  } catch (error: any) {
+    console.error(`Background sync failed for user ${userId}:`, error);
+    dispatch(syncFailure(error.message || "Background sync failed"));
+  }
+};
+
+// Main function to load companies - Database first approach
 export const loadInitialCompanies =
   (userId: string) => async (dispatch: any) => {
-    console.log(`loadInitialCompanies for user ${userId} - starting fresh`);
+    console.log(
+      `Loading companies for user ${userId} - Database first approach`
+    );
     dispatch(setIsLoadingCompanies(true));
-    dispatch(setFilteredCompanies([])); // Start with empty array
 
     try {
-      const isConnected = await NetInfo.fetch().then(
-        (state) => state.isConnected
-      );
+      // Step 1: Always try to load from database first
+      const localCompanies = await loadCompaniesFromDB(userId);
 
-      if (isConnected) {
-        try {
-          console.log(`Fetching companies from API for user ${userId}`);
-          // Make sure axiosInstance has the correct auth token for current user
-          const response = await axiosInstance.get(
-            "/visitors/tenant_visitor_dropdown/"
-          );
-
-          console.log(`API response for user ${userId}:`, response.data);
-          const companies = response.data || [];
-          console.log("response data", companies);
-          const mappedCompanies = companies.map(
-            (company: { id: number; tenant_name: string }) => ({
-              label: company.tenant_name,
-              value: company.id,
-              userId: userId,
-            })
-          );
-
-          console.log(
-            `Setting ${mappedCompanies.length} companies in state for user ${userId}`
-          );
-          dispatch(setFilteredCompanies(mappedCompanies));
-
-          // Try to save to DB (this appears to be failing but at least state will be correct)
-          try {
-            await saveCompaniesToDB(mappedCompanies, userId);
-          } catch (dbError) {
-            console.error(`Database save failed for user ${userId}:`, dbError);
-          }
-        } catch (apiError) {
-          console.error(`API fetch failed for user ${userId}:`, apiError);
-          // Try loading from local DB as fallback
-          const localCompanies = await loadCompaniesFromDB(userId);
-          dispatch(setFilteredCompanies(localCompanies));
-        }
-      } else {
-        // Offline mode
-        const localCompanies = await loadCompaniesFromDB(userId);
+      if (localCompanies.length > 0) {
+        // Database has data, use it immediately
+        console.log(
+          `Found ${localCompanies.length} companies in database for user ${userId}`
+        );
+        dispatch(setAllCompanies(localCompanies));
         dispatch(setFilteredCompanies(localCompanies));
+
+        // Start background sync to update database with fresh data
+        backgroundSyncCompanies(userId, dispatch);
+      } else {
+        // Database is empty, try API as fallback
+        console.log(`No companies in database for user ${userId}, trying API`);
+
+        const isConnected = await NetInfo.fetch().then(
+          (state) => state.isConnected
+        );
+
+        if (isConnected) {
+          try {
+            const response = await axiosInstance.get(
+              "/visitors/tenant_visitor_dropdown/"
+            );
+            const companies = response.data || [];
+
+            // Updated mapping to include tenant_unit_number
+            const mappedCompanies = companies.map(
+              (company: {
+                id: number;
+                tenant_name: string;
+                tenant_unit_number: string;
+              }) => ({
+                label: company.tenant_name,
+                value: String(company.id), // Keep main ID
+                tenantUnitNumber: company.tenant_unit_number, // Add tenant unit number
+                userId: userId,
+              })
+            );
+
+            // Save to database and update state
+            await saveCompaniesToDB(mappedCompanies, userId);
+            dispatch(setAllCompanies(mappedCompanies));
+            dispatch(setFilteredCompanies(mappedCompanies));
+
+            console.log(
+              `Loaded ${mappedCompanies.length} companies from API for user ${userId}`
+            );
+          } catch (apiError) {
+            console.error(`API fallback failed for user ${userId}:`, apiError);
+            dispatch(setFilteredCompanies([]));
+          }
+        } else {
+          console.log(`Device offline and no local data for user ${userId}`);
+          dispatch(setFilteredCompanies([]));
+        }
       }
     } catch (error) {
       console.error(`Error in loadInitialCompanies for user ${userId}:`, error);
@@ -278,135 +419,69 @@ export const loadInitialCompanies =
       dispatch(setIsLoadingCompanies(false));
     }
   };
-// Helper function to save companies to DB
-// In your visitorSlice.ts file, update the saveCompaniesToDB function:
 
-const saveCompaniesToDB = async (companies: any[], userId: string) => {
-  console.log(
-    `Attempting to save ${companies.length} companies for user ${userId} to DB`
-  );
-
+// Enhanced search function - searches by both name and tenant_unit_number
+const searchCompaniesInDB = async (
+  searchTerm: string,
+  userId: string
+): Promise<CompanyOption[]> => {
   try {
-    await database.write(async () => {
-      const companiesCollection = database.get("companies");
+    const companiesCollection = database.get("companies");
+    const allUserCompanies = await companiesCollection
+      .query(Q.where("user_id", userId))
+      .fetch();
 
-      // Fetch existing companies for this user
-      const existingCompanies = await companiesCollection
-        .query(Q.where("user_id", userId))
-        .fetch();
+    console.log(
+      `Searching in ${allUserCompanies.length} companies for "${searchTerm}"`
+    );
 
-      console.log(
-        `Existing companies for user ${userId}:`,
-        existingCompanies.length
-      );
+    const filteredCompanies = allUserCompanies.filter((company: any) => {
+      const tenantName = company.tenantName?.toLowerCase() || "";
+      const tenantUnitNumber = String(company.tenantUnitNumber || "");
+      const searchLower = searchTerm.toLowerCase();
 
-      // Delete existing records
-      for (const company of existingCompanies) {
-        await company.destroyPermanently();
-      }
+      // Search by both name and tenant unit number
+      const nameMatch = tenantName.includes(searchLower);
+      const unitNumberMatch = tenantUnitNumber.includes(searchTerm);
 
-      // Create new records
-      for (const comp of companies) {
-        try {
-          await companiesCollection.create((record: any) => {
-            // Access the database column names directly
-            record._raw.tenant_id = Number(comp.value);
-            record._raw.tenant_name = comp.label;
-            record._raw.user_id = String(userId);
-          });
-          console.log(`Created company: ${comp.label}`);
-        } catch (createError) {
-          console.error(`Failed to create company: ${comp.label}`, createError);
-        }
-      }
+      return nameMatch || unitNumberMatch;
     });
 
-    // Verify the save worked
-    const companiesCollection = database.get("companies");
-    const savedCompanies = await companiesCollection
-      .query(Q.where("user_id", String(userId)))
-      .fetch();
+    console.log(`Found ${filteredCompanies.length} matching companies`);
 
-    console.log(
-      `After save: Found ${savedCompanies.length} companies in DB for user ${userId}`
-    );
-  } catch (error) {
-    console.error(`Failed to save companies to DB:`, error);
-  }
-};
-
-// And update loadCompaniesFromDB similarly:
-
-const loadCompaniesFromDB = async (userId: string) => {
-  try {
-    const companiesCollection = database.get("companies");
-    const localCompanies = await companiesCollection
-      .query(Q.where("user_id", String(userId)))
-      .fetch();
-
-    console.log(
-      `Companies loaded from DB for user ${userId}:`,
-      localCompanies.length
-    );
-
-    return localCompanies.map((comp: any) => ({
-      label: comp._raw.tenant_name,
-      value: comp._raw.tenant_id,
-      userId: comp._raw.user_id,
+    return filteredCompanies.map((comp: any) => ({
+      label: comp.tenantName,
+      value: String(comp.tenantId), // Keep main ID
+      tenantUnitNumber: comp.tenantUnitNumber, // Include tenant unit number
+      userId: comp.userId,
     }));
   } catch (error) {
-    console.error(`Error loading companies from DB for user ${userId}:`, error);
+    console.error(`Error searching companies in DB for user ${userId}:`, error);
     return [];
   }
 };
 
-// Thunk function for fetching companies via API
-export const fetchCompanies =
+// Updated search function - Database only approach
+export const searchCompanies =
   (searchTerm: string, userId: string) => async (dispatch: any) => {
     if (!searchTerm.trim()) {
-      dispatch(setFilteredCompanies([]));
+      // If search term is empty, show all companies from Redux state
+      const state = dispatch.getState();
+      const allCompanies = state.visitor.allCompanies;
+      dispatch(setFilteredCompanies(allCompanies));
       return;
     }
 
     dispatch(setIsLoadingCompanies(true));
 
     try {
-      const isConnected = await NetInfo.fetch().then(
-        (state) => state.isConnected
+      // Always search in local database only
+      const searchResults = await searchCompaniesInDB(searchTerm, userId);
+      dispatch(setFilteredCompanies(searchResults));
+
+      console.log(
+        `Search completed: ${searchResults.length} results for "${searchTerm}"`
       );
-
-      if (isConnected) {
-        // Online: Try API first
-        try {
-          console.log(`Attempting API search for user ${userId}`);
-          const response = await axiosInstance.get(
-            `/visitors/tenant_visitor_dropdown/?search=${searchTerm}`
-          );
-
-          const companies = response.data || [];
-
-          const mappedCompanies = companies.map(
-            (company: { id: number; tenant_name: string }) => ({
-              label: company.tenant_name,
-              value: company.id,
-              userId: userId,
-            })
-          );
-
-          dispatch(setFilteredCompanies(mappedCompanies));
-        } catch (apiError) {
-          console.error("API search failed, falling back to local:", apiError);
-          // Fall back to local search on API error
-          await searchLocalCompanies(searchTerm, userId, dispatch);
-        }
-      } else {
-        // Offline: Search local DB only for this user
-        console.log(
-          `Device offline, searching local DB for user ${userId}:`,
-          searchTerm
-        );
-        await searchLocalCompanies(searchTerm, userId, dispatch);
-      }
     } catch (error) {
       console.error(`Error in company search for user ${userId}:`, error);
       dispatch(setFilteredCompanies([]));
@@ -415,63 +490,83 @@ export const fetchCompanies =
     }
   };
 
-// Helper function for local DB search
-const searchLocalCompanies = async (
-  searchTerm: string,
-  userId: string,
-  dispatch: any
-) => {
-  try {
-    console.log(`Searching local DB for user ${userId}:`, searchTerm);
-    const companiesCollection = database.get("companies");
-
-    // Query companies specific to this user
-    const userCompanies = await companiesCollection
-      .query(Q.where("user_id", userId))
-      .fetch();
-
-    console.log(
-      `Total companies in DB for user ${userId}:`,
-      userCompanies.length
-    );
-
-    // Filter companies by search term
-    const filteredCompanies = userCompanies.filter((company: any) => {
-      const tenantName = company.tenant_name;
-      return (
-        typeof tenantName === "string" &&
-        tenantName.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    });
-
-    console.log("Filtered companies count:", filteredCompanies.length);
-
-    const mappedCompanies = filteredCompanies.map((comp: any) => ({
-      label: comp.tenant_name,
-      value: comp.tenant_id,
-      userId: comp.user_id,
-    }));
-
-    dispatch(setFilteredCompanies(mappedCompanies));
-  } catch (dbError) {
-    console.error(`Error searching local DB for user ${userId}:`, dbError);
-    dispatch(setFilteredCompanies([]));
-  }
-};
+// Handle account change
 export const handleAccountChange =
   (newUserId: string) => async (dispatch: any) => {
     try {
       console.log(`Handling account change to user: ${newUserId}`);
 
-      // Reset the visitor state in Redux
+      // Reset the visitor state
       dispatch(resetForm());
       dispatch(setFilteredCompanies([]));
 
-      // Load data specific to the new user
+      // Load companies for the new user
       dispatch(loadInitialCompanies(newUserId));
 
       console.log(`Successfully switched to account: ${newUserId}`);
     } catch (error) {
       console.error(`Error during account change to ${newUserId}:`, error);
+    }
+  };
+
+// Manual sync function for force refresh
+export const forceRefreshCompanies =
+  (userId: string) => async (dispatch: Dispatch) => {
+    console.log(`Force refreshing companies for user ${userId}`);
+
+    // 1️⃣ Load local DB immediately
+    const localCompanies = await loadCompaniesFromDB(userId);
+    dispatch(setAllCompanies(localCompanies));
+    dispatch(setFilteredCompanies(localCompanies));
+
+    // 2️⃣ Check network connectivity
+    const isConnected = await NetInfo.fetch().then(
+      (state) => state.isConnected
+    );
+    if (!isConnected) {
+      console.log(`Device offline → showing DB data only`);
+      return;
+    }
+
+    // 3️⃣ Trigger API fetch with hard 4s timeout
+    dispatch(setIsLoadingCompanies(true));
+
+    try {
+      // Promise.race ensures either the API resolves or timeout triggers
+      const response = await Promise.race([
+        axiosInstance.get("/visitors/tenant_visitor_dropdown/"),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout: 4s")), 4000)
+        ),
+      ]);
+
+      // Map response
+      const companies = response.data || [];
+      const mappedCompanies = companies.map(
+        (company: {
+          id: number;
+          tenant_name: string;
+          tenant_unit_number: string;
+        }) => ({
+          label: company.tenant_name,
+          value: String(company.id),
+          tenantUnitNumber: company.tenant_unit_number,
+          userId,
+        })
+      );
+
+      // Save to DB and update Redux state
+      await saveCompaniesToDB(mappedCompanies, userId);
+      dispatch(setAllCompanies(mappedCompanies));
+      dispatch(setFilteredCompanies(mappedCompanies));
+
+      console.log(`Force refresh completed from server for user ${userId}`);
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Server unreachable or timeout → keeping DB data: ${errMsg}`
+      );
+    } finally {
+      dispatch(setIsLoadingCompanies(false));
     }
   };

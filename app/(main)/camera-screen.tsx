@@ -1072,11 +1072,11 @@ const CameraScreen = (props: Props) => {
                 animationType="slide" // Slide in animation
               >
                 <View style={styles.fullScreenModal}>
-                  <Image
+                  {/* <Image
                     source={require("../../assets/thankyou.png")} // Replace with your image source
                     style={styles.fullScreenImage}
                     resizeMode="cover"
-                  />
+                  /> */}
                 </View>
               </Modal>
             </View>

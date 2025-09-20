@@ -2,10 +2,21 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
+            <!-- Your existing production certificate -->
             <certificates src="@raw/my_cert" />
-             <certificates src="system"/>
-
+            <!-- Add testing domain certificate -->
+            <certificates src="@raw/webapptest3_cert" />
+            <!-- System certificates -->
+            <certificates src="system"/>
         </trust-anchors>
     </base-config>
+    
+    <!-- Optional: Domain-specific configurations if needed -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">webapptest3.online</domain>
+        <trust-anchors>
+            <certificates src="@raw/webapptest3_cert" />
+            <certificates src="system"/>
+        </trust-anchors>
+    </domain-config>
 </network-security-config>
- 

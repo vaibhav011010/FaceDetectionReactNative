@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -13,6 +19,7 @@ import {
   StatusBar,
   Animated,
   Modal,
+  BackHandler,
 } from "react-native";
 import {
   Camera,
@@ -21,12 +28,14 @@ import {
   PhotoFile,
   CameraPermissionStatus,
 } from "react-native-vision-camera";
+import * as ScreenOrientation from "expo-screen-orientation";
 import { Worklets } from "react-native-worklets-core";
 import {
   useFaceDetector,
   Face,
 } from "react-native-vision-camera-face-detector";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import FaceDetection from "@react-native-ml-kit/face-detection";
+
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, usePathname, useSegments } from "expo-router";
 import {
@@ -43,11 +52,60 @@ import NextSvg from "@/src/utility/nextSvg";
 import StarIcon from "@/src/utility/starIcon";
 import CameraIcon from "@/src/utility/CameraSvg";
 import ThankYou from "@/src/utility/ThankyouIcon";
+import { useUniversalDialog } from "../../src/utility/UniversalDialogProvider";
+
+import { withTimeoutSubmit } from "@/src/utility/withTimeOutSubmit";
 
 const { width, height } = Dimensions.get("window");
 const isTablet = width >= 768;
+
+const useResponsiveDimensions = () => {
+  const [dimensions, setDimensions] = useState(() => {
+    const window = Dimensions.get("window");
+    const screen = Dimensions.get("screen");
+    return {
+      windowWidth: window.width,
+      windowHeight: window.height,
+      screenHeight: screen.height, // Full screen height
+    };
+  });
+
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener(
+      "change",
+      ({ window, screen }) => {
+        setDimensions({
+          windowWidth: window.width,
+          windowHeight: window.height,
+          screenHeight: screen.height,
+        });
+      }
+    );
+
+    return () => subscription?.remove();
+  }, []);
+
+  return {
+    ...dimensions,
+    actualHeight: dimensions.screenHeight, // Use this for full height
+    isLandscape: dimensions.windowWidth > dimensions.windowHeight,
+    isTablet: Math.min(dimensions.windowWidth, dimensions.windowHeight) >= 768,
+  };
+};
+interface LooseFace {
+  bounds?: {
+    origin: { x: number; y: number };
+    size: { width: number; height: number };
+  };
+  [key: string]: any;
+}
 const FaceDetectionCamera: React.FC = () => {
+  const [uiRotation, setUiRotation] = useState<number>(0);
+
+  const { windowWidth, windowHeight, isLandscape, isTablet, screenHeight } =
+    useResponsiveDimensions();
   // States
+  const [isXiaomiDevice, setIsXiaomiDevice] = useState(false);
   const router = useRouter();
   const dispatch = useDispatch<AppDispatch>();
   const {
@@ -61,6 +119,13 @@ const FaceDetectionCamera: React.FC = () => {
   const [capturedPhotoBase64, setCapturedPhotoBase64] = useState<string | null>(
     null
   );
+  const [cameraKey, setCameraKey] = useState(0);
+  const showDialog = useUniversalDialog();
+  const [bootstrapped, setBootstrapped] = useState(false);
+
+  const [isCameraReady, setIsCameraReady] = useState(true);
+  const [captureAttemptsLeft, setCaptureAttemptsLeft] = useState(5);
+
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -85,11 +150,28 @@ const FaceDetectionCamera: React.FC = () => {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const steadyFaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCaptureAgainDisabled, setIsCaptureAgainDisabled] = useState(false);
+  const [photoHasFace, setPhotoHasFace] = useState<boolean>(false);
+  const [isValidating, setIsValidating] = useState(false);
+
+  // useEffect(() => {
+  //   ScreenOrientation.unlockAsync(); // allow rotation
+
+  //   return () => {
+  //     ScreenOrientation.lockAsync(
+  //       ScreenOrientation.OrientationLock.PORTRAIT_UP
+  //     );
+  //   };
+  // }, []);
 
   const { detectFaces } = useFaceDetector({
     performanceMode: "fast",
-    landmarkMode: "all",
+    landmarkMode: "none", // No landmarks needed
+    contourMode: "none", // No contours needed
+    classificationMode: "none", // No smile/eye detection needed
+    minFaceSize: 0.05, // Accept very small faces (5% of image)
+    trackingEnabled: false, // Disable tracking for speed
   });
+
   const animateCountdown = () => {
     Animated.sequence([
       Animated.timing(scaleAnim, {
@@ -107,6 +189,16 @@ const FaceDetectionCamera: React.FC = () => {
 
   // Camera setup
   const device = useCameraDevice("front");
+  // Pick the smallest HD or lower format (≤720p)
+  const format = useMemo(() => {
+    if (!device || !device.formats?.length) return undefined;
+
+    return device.formats
+      .filter((f) => f.videoWidth <= 1280 && f.videoHeight <= 720)
+      .sort(
+        (a, b) => a.videoWidth * a.videoHeight - b.videoWidth * b.videoHeight
+      )[0];
+  }, [device]);
 
   // Hide status bar
   useEffect(() => {
@@ -128,116 +220,175 @@ const FaceDetectionCamera: React.FC = () => {
   }, []);
 
   // Face detection callback - simplified and more reliable
+
+  // Face detection callback - simplified and more reliable
   const onFaceDetected = useCallback(
     (faces: Face[]) => {
-      if (hasTakenPhotoRef.current || isTakingPicture) return;
+      const timestamp = Date.now();
 
-      // Debug: Log the first face structure if available
-      if (faces.length > 0) {
-        console.log(
-          "Face detected, data:",
-          JSON.stringify({
-            hasLeftEye: !!faces[0].landmarks?.LEFT_EYE,
-            hasRightEye: !!faces[0].landmarks?.RIGHT_EYE,
-            leftEyeOpen: faces[0].leftEyeOpenProbability,
-            rightEyeOpen: faces[0].rightEyeOpenProbability,
-            bounds: faces[0].bounds,
-            width: width,
-            height: height,
-          })
-        );
+      // Log entry conditions
+      if (
+        hasTakenPhotoRef.current ||
+        isTakingPicture ||
+        isCaptureAgainDisabled
+      ) {
+        console.log(`[${timestamp}] 🚫 Face detection blocked:`, {
+          hasTakenPhoto: hasTakenPhotoRef.current,
+          isTakingPicture,
+          isCaptureAgainDisabled,
+          facesCount: faces.length,
+        });
+        return;
       }
 
-      // Simplify validation - just check if we have a face with reasonable size
+      console.log(`[${timestamp}] 👁️ Processing ${faces.length} faces`);
+
+      // MUCH SIMPLER validation - just check if face exists and has reasonable size
       const validFace =
         faces.length > 0 &&
-        faces.some((face) => {
+        faces.some((face, index) => {
           const faceWidth = face.bounds.width;
           const faceHeight = face.bounds.height;
 
-          // Calculate the visible camera frame area
-          const visibleHeight = height * 0.55; // 55% of screen height
-          const visibleMinY = (height - visibleHeight) / 2; // Assuming centered
-          const visibleMaxY = visibleMinY + visibleHeight;
+          console.log(`[${timestamp}] 📏 Face ${index} dimensions:`, {
+            width: faceWidth,
+            height: faceHeight,
+            bounds: face.bounds,
+            isTablet,
+          });
 
-          // Check if face is mostly within the visible frame
-          const faceY = face.bounds.y;
-          const faceBottomY = faceY + faceHeight;
-          const faceInView =
-            faceBottomY > visibleMinY &&
-            faceY < visibleMaxY &&
-            // At least 70% of face height should be in visible area
-            Math.min(faceBottomY, visibleMaxY) - Math.max(faceY, visibleMinY) >
-              faceHeight * 0.7;
+          // Allow extremely small faces (1% of preview size)
+          const minSize = 5; // basically almost any detected face
+          const isValidSize = faceWidth > minSize && faceHeight > minSize;
 
-          // Face should be at least 15% of visible area width/height for better validation
-          const minFaceSize = Math.min(width, visibleHeight) * 0.15;
+          console.log(`[${timestamp}] ✅ Face ${index} validation:`, {
+            isValidSize,
+            minSize,
+            meetsRequirement: isValidSize,
+          });
 
-          return (
-            faceWidth > minFaceSize && faceHeight > minFaceSize && faceInView
-          );
+          return isValidSize;
         });
-      // Update state only if detection status changed
+
+      // Only update if status actually changed to prevent unnecessary re-renders
       if (validFace !== isFaceDetected) {
+        console.log(`[${timestamp}] 🔄 Face detection state changed:`, {
+          from: isFaceDetected,
+          to: validFace,
+          facesCount: faces.length,
+        });
         setIsFaceDetected(validFace);
-        console.log(
-          validFace ? "Face properly detected!" : "No valid face detected"
-        );
       }
 
-      // Handle photo capture with debounce
-      if (validFace && !photoTimeoutRef.current) {
+      // Immediate photo capture when face detected (no delays)
+      if (validFace && !photoTimeoutRef.current && !hasTakenPhotoRef.current) {
+        console.log(`[${timestamp}] 📸 Scheduling photo capture...`);
         photoTimeoutRef.current = setTimeout(() => {
           if (!hasTakenPhotoRef.current && !isTakingPicture) {
+            console.log(`[${Date.now()}] 🎯 Executing photo capture`);
             takePicture();
+          } else {
+            console.log(`[${Date.now()}] ❌ Photo capture cancelled:`, {
+              hasTakenPhoto: hasTakenPhotoRef.current,
+              isTakingPicture,
+            });
           }
           photoTimeoutRef.current = null;
-        }, 200); // Slightly shorter delay
-      } else if (!validFace && photoTimeoutRef.current) {
-        clearTimeout(photoTimeoutRef.current);
-        photoTimeoutRef.current = null;
+        }, 50); // Very short delay - just enough to prevent double captures
+      } else if (validFace) {
+        console.log(`[${timestamp}] ⏳ Photo capture blocked:`, {
+          hasTimeout: !!photoTimeoutRef.current,
+          hasTakenPhoto: hasTakenPhotoRef.current,
+        });
       }
     },
-    [isFaceDetected, isTakingPicture]
+    [isFaceDetected, isTakingPicture, isCaptureAgainDisabled, isTablet]
   );
 
   // Create worklet functions
   const onFaceDetectedJS = Worklets.createRunOnJS(onFaceDetected);
 
   // Improved frame processor with better locking mechanism
+  const lastProcess = useRef<number>(0);
   const frameProcessor = useFrameProcessor((frame) => {
     "worklet";
 
-    // Use ref-based lock instead of state to avoid race conditions
-    if (processingLock.current) return;
+    const now = Date.now();
 
+    // Log throttling
+    if (now - lastProcess.current < 50) {
+      // Uncomment for very detailed throttling logs (can be noisy)
+      // console.log(`[${now}] ⏱️ Frame throttled, last: ${now - lastProcess.current}ms ago`);
+      return;
+    }
+
+    // Skip if already processing to prevent queue buildup
+    if (processingLock.current) {
+      console.log(`[${now}] 🔒 Frame skipped - processing lock active`);
+      return;
+    }
+
+    console.log(
+      `[${now}] 🎬 Processing frame - gap: ${now - lastProcess.current}ms`
+    );
+
+    lastProcess.current = now;
     processingLock.current = true;
 
     try {
+      const startDetection = Date.now();
       const faces = detectFaces(frame);
-      // This makes face disappearance detection much faster
-      if (faces.length === 0) {
-        onFaceDetectedJS([]);
-      } else {
-        onFaceDetectedJS(faces);
-      }
-    } catch (e) {
-      // Silent catch to prevent crashes
-      onFaceDetectedJS([]);
+      const detectionTime = Date.now() - startDetection;
+
+      console.log(`[${now}] 🔍 Face detection completed:`, {
+        detectionTime: `${detectionTime}ms`,
+        facesFound: faces.length,
+        processingGap: now - lastProcess.current,
+      });
+
+      onFaceDetectedJS(faces);
+    } catch (error) {
+      console.error(`[${now}] ❌ Face detection error:`, error);
+      onFaceDetectedJS([]); // Continue with empty array
     } finally {
+      // CRITICAL: Always unlock, even on error
       processingLock.current = false;
+      console.log(`[${Date.now()}] 🔓 Processing lock released`);
     }
   }, []);
+  // const cleanupFaceDetection = useCallback(() => {
+  //   if (photoTimeoutRef.current) {
+  //     clearTimeout(photoTimeoutRef.current);
+  //   }
+  //   processingLock.current = false;
+  //   setIsFaceDetected(false);
+  // }, []);
 
   // Request camera permissions
   useEffect(() => {
-    const requestPermissions = async (): Promise<void> => {
-      const cameraPermission: CameraPermissionStatus =
-        await Camera.requestCameraPermission();
-      setHasPermission(cameraPermission === "granted");
+    const checkPermissions = async (): Promise<void> => {
+      try {
+        // First check existing status
+        const currentStatus: CameraPermissionStatus =
+          await Camera.getCameraPermissionStatus();
+
+        if (currentStatus === "granted") {
+          setHasPermission(true);
+        } else if (currentStatus === "denied") {
+          setHasPermission(false);
+        } else {
+          // If undetermined → request
+          const newStatus: CameraPermissionStatus =
+            await Camera.requestCameraPermission();
+          setHasPermission(newStatus === "granted");
+        }
+      } catch (err) {
+        console.error("Permission check failed:", err);
+        setHasPermission(false); // fallback so UI doesn't spin forever
+      }
     };
 
-    requestPermissions();
+    checkPermissions();
 
     return () => {
       // Clean up all timeouts
@@ -255,6 +406,8 @@ const FaceDetectionCamera: React.FC = () => {
         animateCountdown(); // Trigger animation every time the countdown changes
       }, 1000);
     } else if (countdown === 0) {
+      console.log("⏱️ Countdown finished, resetting camera...");
+      setCameraKey((prev) => prev + 1);
       setShowCamera(true);
     }
 
@@ -271,7 +424,7 @@ const FaceDetectionCamera: React.FC = () => {
     return () => {
       // Explicitly release camera resources
       cameraRef.current = null;
-      setShowCamera(false);
+      //setShowCamera(false);
 
       // Clear all refs and timeouts
       hasTakenPhotoRef.current = false;
@@ -292,6 +445,51 @@ const FaceDetectionCamera: React.FC = () => {
     };
   }, []);
 
+  // Alternative: Even more lenient version with option to skip
+  async function validateCapturedImage(uri: string): Promise<boolean> {
+    try {
+      const faces = await FaceDetection.detect(uri, {
+        performanceMode: "fast",
+        landmarkMode: "none",
+        classificationMode: "none",
+        minFaceSize: 0.001, // Extremely small minimum face size
+      });
+
+      const faceCount = faces?.length || 0;
+      console.log("Lenient face validation:", { facesFound: faceCount });
+
+      // If no face found, give user choice but don't force retake
+      if (faceCount === 0) {
+        let userChoice = false;
+        await showDialog({
+          title: "Face Detection",
+          message:
+            "We couldn’t find a face in your photo. You can still continue, but a clear face photo works best. Press Continue to proceed or Retake to try again.",
+          actions: [
+            {
+              label: "Retake Photo",
+              onPress: () => {
+                userChoice = false;
+              },
+            },
+            {
+              label: "Continue",
+              mode: "contained",
+              onPress: () => {
+                userChoice = true;
+              },
+            },
+          ],
+        });
+        return userChoice;
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Face validation error:", error);
+      return true;
+    }
+  }
   // Take picture function with proper error handling
   const takePicture = useCallback(async (): Promise<void> => {
     if (!cameraRef.current || isTakingPicture || hasTakenPhotoRef.current) {
@@ -327,93 +525,273 @@ const FaceDetectionCamera: React.FC = () => {
       if (Platform.OS === "android") {
         ToastAndroid.show("Failed to capture photo", ToastAndroid.SHORT);
       } else {
-        Alert.alert("Error", "Failed to capture photo");
+        await showDialog({
+          title: "Error",
+          message: "Failed to capture photo",
+          actions: [
+            {
+              label: "OK",
+              mode: "contained",
+              onPress: () => {},
+            },
+          ],
+        });
       }
     } finally {
       setIsTakingPicture(false);
     }
   }, [isTakingPicture, notifyCapture]);
+  // Add this cleanup function
+  const cleanupCamera = useCallback(() => {
+    const timestamp = Date.now();
+    console.log(`[${timestamp}] 🧹 Starting camera cleanup...`);
 
+    // Log current state before cleanup
+    console.log(`[${timestamp}] 📊 Pre-cleanup state:`, {
+      hasTakenPhoto: hasTakenPhotoRef.current,
+      processingLock: processingLock.current,
+      isFaceDetected,
+      isProcessingFrame,
+      activeTimeouts: {
+        photo: !!photoTimeoutRef.current,
+        capture: !!captureTimeoutRef.current,
+        steadyFace: !!steadyFaceTimerRef.current,
+        main: !!timeoutRef.current,
+      },
+    });
+
+    // Clear all timeouts
+    let clearedTimeouts = 0;
+    [
+      photoTimeoutRef,
+      captureTimeoutRef,
+      steadyFaceTimerRef,
+      timeoutRef,
+    ].forEach((ref, index) => {
+      const timeoutNames = ["photo", "capture", "steadyFace", "main"];
+      if (ref.current) {
+        clearTimeout(ref.current);
+        ref.current = null;
+        clearedTimeouts++;
+        console.log(`[${timestamp}] ⏰ Cleared ${timeoutNames[index]} timeout`);
+      }
+    });
+
+    // Reset all refs and locks
+    const previousStates = {
+      hasTakenPhoto: hasTakenPhotoRef.current,
+      processingLock: processingLock.current,
+      lastProcess: lastProcess.current,
+    };
+
+    hasTakenPhotoRef.current = false;
+    processingLock.current = false;
+    lastProcess.current = 0; // Reset the throttle timer
+
+    // Reset face detection state
+    setIsFaceDetected(false);
+    setIsProcessingFrame(false);
+
+    console.log(`[${timestamp}] ✅ Cleanup completed:`, {
+      clearedTimeouts,
+      previousStates,
+      newStates: {
+        hasTakenPhoto: hasTakenPhotoRef.current,
+        processingLock: processingLock.current,
+        lastProcess: lastProcess.current,
+      },
+    });
+
+    // Force cleanup hint
+    if (global.gc) {
+      console.log(`[${timestamp}] 🗑️ Triggering garbage collection`);
+      global.gc();
+    }
+  }, [isFaceDetected, isProcessingFrame]);
   // Safely reset to capture again - improved for reliability
-  const captureAgain = useCallback((): void => {
+  const captureAgain = useCallback(async (): Promise<void> => {
     if (isCaptureAgainDisabled) return;
-    // Reset state in the correct order
-    setCapturedPhoto(null);
 
-    setIsCaptureAgainDisabled(true);
-
-    // Small delay to ensure clean state before reactivating detection
-    setTimeout(() => {
-      hasTakenPhotoRef.current = false;
-      setIsFaceDetected(false);
-      setIsCaptureAgainDisabled(false); // Re-enable the button after delay
-      processingLock.current = false;
-    }, 300);
-  }, []);
-
-  const convertAndSubmit = async () => {
-    setIsLoading(true);
-    if (!capturedPhoto) {
-      Alert.alert("Error", "No photo to submit");
+    if (captureAttemptsLeft <= 0) {
+      // Reached last attempt — show alert and exit before triggering reset
+      await showDialog({
+        title: "Maximum Attempts Reached",
+        message:
+          "You've used all 5 tries. Please try again from the Home Page.",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {
+              confirmCancel(); // navigate to home, reset states
+            },
+          },
+        ],
+      });
       return;
     }
 
+    setIsCaptureAgainDisabled(true);
+    cleanupCamera();
+    setCapturedPhoto(null);
+    setIsFaceDetected(false);
+
+    const delay = isXiaomiDevice ? 800 : 300;
+
+    setTimeout(() => {
+      setCameraKey((prev) => prev + 1);
+      hasTakenPhotoRef.current = false;
+      processingLock.current = false;
+      setIsCaptureAgainDisabled(false);
+
+      // Now safely decrement attempt count AFTER reset is done
+      setCaptureAttemptsLeft((prev) => prev - 1);
+    }, delay);
+  }, [cleanupCamera, captureAttemptsLeft, isCaptureAgainDisabled]);
+  const convertAndSubmit = async () => {
+    console.log("🔥 convertAndSubmit started");
+    setIsLoading(true);
+    setIsCaptureAgainDisabled(true);
+
+    if (!capturedPhoto) {
+      console.log("❌ No captured photo");
+      await showDialog({
+        title: "Error",
+        message: "No photo to submit",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {},
+          },
+        ],
+      });
+      setIsLoading(false);
+      setIsCaptureAgainDisabled(false);
+      return;
+    }
+
+    let shouldShowModal = false;
+
     try {
+      console.log("✅ Starting submission process");
       setShowConfirmModal(false);
 
       // Prepare base64
       let base64String = capturedPhotoBase64;
       if (!base64String) {
+        console.log("📷 Converting photo to base64");
         const result = await convertPhotoToBase64(capturedPhoto);
         base64String =
           typeof result === "string" ? result : result.image_base64;
       }
 
-      const result = await submitVisitor(
-        visitorNameRedux,
-        visitorMobileRedux,
-        Number(visitingCompanyRedux),
-        base64String
-      );
+      let result;
+      let isOfflineScenario = false;
 
-      // Reset the form state no matter what
-      resetStates(true); // always reset UI inputs
+      console.log("🌐 Attempting API submission with 4 second timeout");
+      try {
+        result = await withTimeoutSubmit(
+          submitVisitor(
+            visitorNameRedux,
+            visitorMobileRedux,
+            Number(visitingCompanyRedux),
+            base64String
+          ),
+          4000
+        );
+        console.log("✅ API submission result:", result);
+      } catch (error: any) {
+        console.log("❌ API submission failed/timeout:", error.message);
+        isOfflineScenario = true;
+        result = {
+          success: false,
+          error: "stored locally",
+        };
+      }
 
-      // Detect “offline stored” and treat it as success
-      const offlineStored =
-        !result.success && result.error?.includes("stored locally");
+      const offlineStored = isOfflineScenario;
 
-      if (result.success || offlineStored) {
-        // Show thank you (even offline)
-        setShowThankYouModal(true);
+      // Check if data was stored locally (even if success is false)
+      const wasStoredLocally =
+        result.error && result.error.includes("stored locally");
+
+      console.log("📊 Submit result:", {
+        success: result.success,
+        offlineStored,
+        isOfflineScenario,
+        wasStoredLocally,
+        error: result.error,
+      });
+
+      // Show modal if successful OR if stored locally
+      if (result.success || offlineStored || wasStoredLocally) {
+        console.log("🎯 Success or offline scenario - should show modal");
+        shouldShowModal = true;
         setCapturedPhoto(null);
-
-        setTimeout(() => {
-          setShowThankYouModal(false);
-          router.replace("/checkin-screen");
-        }, 2000);
+        resetStates(true);
+        console.log("🎯 shouldShowModal set to:", shouldShowModal);
       } else {
-        // A genuine failure—just navigate back so they can try again
+        console.log("💥 Complete failure - navigating immediately");
+        resetStates(true);
         router.replace("/checkin-screen");
       }
     } catch (error) {
-      Alert.alert(
-        "Submit Failed",
-        "Visitor check-in submission failed. Please try again."
-      );
+      console.error("💥 Unexpected error in convertAndSubmit:", error);
+      await showDialog({
+        title: "Submit Failed",
+        message: "Visitor check-in submission failed. Please try again.",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {},
+          },
+        ],
+      });
+      setIsCaptureAgainDisabled(false);
     } finally {
+      console.log("🏁 Finally block - turning off loading");
       setIsLoading(false);
+
+      console.log("🎭 Finally block - shouldShowModal:", shouldShowModal);
+
+      if (shouldShowModal) {
+        console.log("🎉 About to show thank you modal in 100ms");
+        setTimeout(() => {
+          console.log("🎭 Setting showThankYouModal to true");
+          setShowThankYouModal(true);
+
+          setTimeout(() => {
+            console.log("🚀 Closing modal and navigating after 2 seconds");
+            setShowThankYouModal(false);
+            router.replace("/checkin-screen");
+          }, 2000);
+        }, 100);
+      } else {
+        console.log("❌ shouldShowModal is false - not showing modal");
+      }
     }
   };
-
   // Handle cancel
   const handleCancel = () => {
     setShowCancelModal(true);
   };
 
   const resetStates = (clearRedux = false) => {
+    setShowCamera(false);
     setCapturedPhotoBase64(null);
-
+    setCapturedPhoto(null);
+    setIsTakingPicture(false);
+    setIsFaceDetected(false);
+    hasTakenPhotoRef.current = false;
+    processingLock.current = false;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    if (photoTimeoutRef.current) clearTimeout(photoTimeoutRef.current);
+    if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+    timeoutRef.current = null;
+    photoTimeoutRef.current = null;
+    captureTimeoutRef.current = null;
     if (clearRedux) {
       dispatch(resetForm());
       dispatch(clearVisitorName());
@@ -421,6 +799,7 @@ const FaceDetectionCamera: React.FC = () => {
       dispatch(clearVisitingCompany());
     }
   };
+
   const confirmCancel = () => {
     setShowCancelModal(false);
     setShowThankYouModal(false);
@@ -443,37 +822,72 @@ const FaceDetectionCamera: React.FC = () => {
     captureTimeoutRef.current = null;
     router.replace("/checkin-screen");
   };
-  const handleConfirmSubmit = () => {
-    convertAndSubmit();
+  const handleConfirmSubmit = async () => {
+    if (!capturedPhoto) {
+      await showDialog({
+        title: "Error",
+        message: "No photo to submit",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {}, // closes dialog
+          },
+        ],
+      });
+      return;
+    }
+
+    // 1️⃣ Close modal so it’s not blocking
+    setShowConfirmModal(false);
+    setIsCaptureAgainDisabled(true);
+
+    // 2️⃣ Fade button to indicate “checking photo”
+    setIsValidating(true);
+
+    // 3️⃣ Run face-validation
+    const ok = await validateCapturedImage(capturedPhoto);
+
+    // 4️⃣ Always turn off the fade
+    setIsValidating(false);
+    try {
+      if (!ok) {
+        // Validation failed: re-enable capture again since we're staying on screen
+        setIsCaptureAgainDisabled(false);
+        return;
+      }
+
+      // 5️⃣ Validation passed → now show spinner and submit
+      // convertAndSubmit() already flips isLoading internally
+      await convertAndSubmit();
+    } catch (error) {
+      // Handle any unexpected errors
+      console.error("Error in handleConfirmSubmit:", error);
+      setIsValidating(false);
+      setIsCaptureAgainDisabled(false); // Re-enable on error
+      await showDialog({
+        title: "Error",
+        message: "An unexpected error occurred. Please try again.",
+        actions: [
+          {
+            label: "OK",
+            mode: "contained",
+            onPress: () => {},
+          },
+        ],
+      });
+    }
   };
 
-  // Loading or permission state
-  if (hasPermission === null || countdown > 0) {
+  if (hasPermission === null) {
     return (
       <View style={styles.container}>
-        {hasPermission === null ? (
-          <ActivityIndicator size="large" color="#0000ff" />
-        ) : (
-          <View style={styles.countdownOverlay}>
-            <Text style={styles.countdownTitle}>Getting Ready</Text>
-            <Text style={styles.countdownInstructions}>
-              Please prepare to position your face
-            </Text>
-            <Animated.Text
-              style={[
-                styles.initialCountdownText,
-                { transform: [{ scale: scaleAnim }] },
-              ]}
-            >
-              {countdown}
-            </Animated.Text>
-          </View>
-        )}
+        <ActivityIndicator size="large" color="#03045E" />
       </View>
     );
   }
 
-  // No permission state
+  // 2. Permission denied
   if (hasPermission === false) {
     return (
       <View style={styles.container}>
@@ -491,6 +905,28 @@ const FaceDetectionCamera: React.FC = () => {
     );
   }
 
+  // 3. Countdown before showing camera
+  if (countdown > 0) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.countdownOverlay}>
+          <Text style={styles.countdownTitle}>Getting Ready</Text>
+          <Text style={styles.countdownInstructions}>
+            Please prepare to position your face
+          </Text>
+          <Animated.Text
+            style={[
+              styles.initialCountdownText,
+              { transform: [{ scale: scaleAnim }] },
+            ]}
+          >
+            {countdown}
+          </Animated.Text>
+        </View>
+      </View>
+    );
+  }
+
   // No device state
   if (!device) {
     return (
@@ -499,23 +935,164 @@ const FaceDetectionCamera: React.FC = () => {
       </View>
     );
   }
+  const responsiveStyles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: "#EEF2F6",
+      justifyContent: "center",
+      alignItems: "center",
+      width: "100%",
+    },
+    contentContainer: {
+      flex: 1,
+      width: "100%",
+      backgroundColor: "#EEF2F6",
+      flexDirection: isLandscape ? "row" : "column", // Key change
+    },
+    cameraContainer: {
+      height: isLandscape ? "100%" : "55%", // Responsive height
+      width: isLandscape ? "65%" : "100%", // Responsive width
+      justifyContent: "center",
+      alignSelf: isLandscape ? "center" : "auto",
+      alignItems: "center",
+      paddingTop: isLandscape ? 20 : 50, // Responsive padding
+      paddingBottom: isLandscape ? 20 : 50, // Responsive padding
+    },
+    cameraFrameContainer: {
+      width: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      flex: 1,
+    },
+    cameraFrame: {
+      width: isLandscape ? "90%" : "80%",
+      aspectRatio: 1,
+      borderWidth: 2,
+      borderColor: "#30345E",
+      borderRadius: 20,
+      elevation: 3,
+      overflow: "hidden",
+    },
+    camera: {
+      width: "100%",
+      height: "100%",
+    },
+    controlsContainer: {
+      flex: isLandscape ? 1 : 0.8, // Responsive flex
+      paddingHorizontal: isLandscape ? 20 : 40,
+      backgroundColor: "transparent",
+      paddingBottom: 30,
+      width: isLandscape ? "35%" : "100%", // Responsive width
+      alignItems: "center",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.2,
+      flexDirection: "column",
+      justifyContent: isLandscape ? "center" : "space-between",
+      shadowRadius: 1.41,
+    },
+    actionButtonsContainer: {
+      flexDirection: isLandscape ? "column" : "row", // Stack vertically in landscape
+      justifyContent: "center",
+      alignItems: "center",
+      width: "100%",
+      gap: isLandscape ? 10 : 30,
+    },
+    cancelButton: {
+      backgroundColor: "transparent",
+      borderColor: "#03045E",
+      borderWidth: 2,
+      padding: 7,
+      borderRadius: 5,
+      alignItems: "center",
+      marginTop: isLandscape ? 20 : 40,
+      marginBottom: isLandscape ? 15 : 30,
+      width: isLandscape ? "100%" : "40%", // Responsive width
+      height: 36, // Responsive height
+      flexDirection: "row",
+      justifyContent: "center",
+      gap: 10,
+    },
+    submitButton: {
+      backgroundColor: "#03045E",
+      padding: 8,
+      borderRadius: 5,
+      alignItems: "center",
+      marginTop: isLandscape ? 20 : 40,
+      marginBottom: isLandscape ? 15 : 30,
+      width: isLandscape ? "80%" : "30%",
+      height: 36, // Responsive height
+      flexDirection: "row",
+      justifyContent: "center",
+      gap: 10,
+    },
+    captureAgainButton: {
+      backgroundColor: "#03045E",
+      borderRadius: 10,
+      width: "100%",
+      height: 40, // Responsive height
+      alignItems: "center",
+      marginTop: isLandscape ? 10 : "auto",
+      justifyContent: "center",
+    },
+    instructionsContainer: {
+      alignItems: "center",
+      justifyContent: "center",
+      padding: isLandscape ? 10 : 20,
+    },
+    instructionText: {
+      fontSize: isTablet ? 18 : 16,
+      fontWeight: "500",
+      textAlign: "center",
+      color: "#001973",
+    },
+    cancelButtonText: {
+      color: "#03045E",
+      fontSize: isTablet ? 20 : 14,
+      fontFamily: "OpenSans_Condensed-Bold",
+    },
+    submitButtonText: {
+      color: "white",
+      fontSize: isTablet ? 20 : 14,
+      fontFamily: "OpenSans_Condensed-Bold",
+    },
+    // Modal styles remain mostly the same but can be made responsive
+    modalContainer: {
+      backgroundColor: "#FFFFFF",
+      borderRadius: 15,
+      width: isLandscape ? "60%" : "90%", // Responsive modal width
+      maxWidth: 400,
+      overflow: "hidden",
+      elevation: 5,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3.84,
+    },
+
+    // ... rest of your existing modal styles
+  });
+
   const getResponsiveSize = (baseSize: number) => {
     const scaleFactor = width / 375; // Standard iPhone width as base
     return baseSize * scaleFactor;
   };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#EEF2F6" }}>
       <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-        {showCamera ? (
-          <View style={styles.contentContainer}>
+        {showCamera && (
+          <View style={responsiveStyles.contentContainer}>
             {/* Camera Container */}
-            <View style={styles.cameraContainer}>
+            <View style={responsiveStyles.cameraContainer}>
               {!capturedPhoto ? (
                 /* Camera View */
-                <View style={styles.cameraFrameContainer}>
-                  <View style={styles.cameraFrame}>
+                <View style={responsiveStyles.cameraFrameContainer}>
+                  <View style={[responsiveStyles.cameraFrame]}>
                     <Camera
+                      key={cameraKey}
                       ref={cameraRef}
+                      zoom={isTablet ? 0.6 : 0.4}
                       style={styles.camera}
                       device={device}
                       photoQualityBalance="speed"
@@ -523,9 +1100,17 @@ const FaceDetectionCamera: React.FC = () => {
                       isActive={!capturedPhoto && showCamera}
                       pixelFormat="yuv"
                       photo={true}
+                      videoHdr={false}
+                      photoHdr={false}
+                      lowLightBoost={false}
+                      videoStabilizationMode="off"
+                      enableZoomGesture={false}
+                      resizeMode="cover"
                       frameProcessor={
                         !capturedPhoto ? frameProcessor : undefined
                       }
+                      enableDepthData={false}
+                      enablePortraitEffectsMatteDelivery={false}
                     />
 
                     {/* Face detection overlay */}
@@ -571,8 +1156,8 @@ const FaceDetectionCamera: React.FC = () => {
                 </View>
               ) : (
                 /* Preview image with capture banner */
-                <View style={styles.cameraFrameContainer}>
-                  <View style={styles.cameraFrame}>
+                <View style={responsiveStyles.cameraFrameContainer}>
+                  <View style={responsiveStyles.cameraFrame}>
                     <Image
                       source={{ uri: capturedPhoto }}
                       style={styles.preview}
@@ -589,11 +1174,11 @@ const FaceDetectionCamera: React.FC = () => {
             </View>
 
             {/* Controls and instructions section */}
-            <View style={styles.controlsContainer}>
+            <View style={responsiveStyles.controlsContainer}>
               {capturedPhoto ? (
                 <>
                   {/* Submit/Cancel buttons */}
-                  <View style={styles.actionButtonsContainer}>
+                  <View style={responsiveStyles.actionButtonsContainer}>
                     <TouchableOpacity
                       style={[
                         styles.cancelButton,
@@ -604,20 +1189,23 @@ const FaceDetectionCamera: React.FC = () => {
                           alignItems: "center",
                           justifyContent: "center",
                           gap: 10,
+                          opacity: isLoading || isValidating ? 0.3 : 1,
                         },
                       ]}
+                      disabled={isLoading || isValidating}
                       onPress={handleCancel}
                     >
                       {/* <View style={styles.buttonContent}>  */}
                       {/* <Ionicons name="close-circle" size={22} color="#03045E" /> */}
                       <StarIcon />
-                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                      <Text style={responsiveStyles.cancelButtonText}>
+                        Cancel
+                      </Text>
                       {/* </View> */}
                     </TouchableOpacity>
-
                     <TouchableOpacity
                       style={[
-                        styles.submitButton,
+                        responsiveStyles.submitButton,
                         {
                           width: "50%",
                           height: getResponsiveSize(40),
@@ -625,8 +1213,10 @@ const FaceDetectionCamera: React.FC = () => {
                           alignItems: "center",
                           justifyContent: "center",
                           gap: 10,
+                          opacity: isValidating ? 0.3 : 1,
                         },
                       ]}
+                      disabled={isLoading || isValidating}
                       onPress={() => setShowConfirmModal(true)}
                     >
                       {isLoading ? (
@@ -634,12 +1224,9 @@ const FaceDetectionCamera: React.FC = () => {
                       ) : (
                         //   <View style={styles.buttonContent}>
                         <>
-                          <Text style={styles.submitButtonText}>Submit</Text>
-                          {/* <Ionicons
-                            name="checkmark-circle"
-                            size={22}
-                            color="#fafafa"
-                          /> */}
+                          <Text style={responsiveStyles.submitButtonText}>
+                            Submit
+                          </Text>
                           <NextSvg />
                         </>
                         //   </View>
@@ -650,15 +1237,22 @@ const FaceDetectionCamera: React.FC = () => {
                   {/* Capture Again button */}
                   <View style={styles.footerContainer}>
                     <TouchableOpacity
-                      style={styles.captureAgainButton}
+                      style={[
+                        responsiveStyles.captureAgainButton,
+                        {
+                          opacity: isCaptureAgainDisabled ? 0.3 : 1,
+                        },
+                      ]}
                       onPress={captureAgain}
                       disabled={isCaptureAgainDisabled}
                     >
                       <View style={styles.captureAgainContent}>
                         {/* <Ionicons name="camera" size={22} color="#fafafa" /> */}
-                        <CameraIcon />
-                        <Text style={styles.captureAgainText}>
-                          Capture Again
+                        <CameraIcon
+                          style={{ opacity: isCaptureAgainDisabled ? 0.3 : 1 }}
+                        />
+                        <Text style={[styles.captureAgainText]}>
+                          Capture Again ({captureAttemptsLeft})
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -666,8 +1260,8 @@ const FaceDetectionCamera: React.FC = () => {
                 </>
               ) : (
                 /* Instruction text */
-                <View style={styles.instructionsContainer}>
-                  <Text style={styles.instructionText}>
+                <View style={responsiveStyles.instructionsContainer}>
+                  <Text style={responsiveStyles.instructionText}>
                     {isFaceDetected
                       ? "Hold still while we capture your photo"
                       : "Center your face in the frame"}
@@ -676,19 +1270,11 @@ const FaceDetectionCamera: React.FC = () => {
               )}
             </View>
           </View>
-        ) : (
-          <View style={styles.container}>
-            <ActivityIndicator size="large" color="#0000ff" />
-          </View>
         )}
 
-        <Modal
-          visible={showConfirmModal}
-          transparent={true}
-          animationType="fade"
-        >
+        <Modal visible={showConfirmModal} transparent animationType="fade">
           <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
+            <View style={responsiveStyles.modalContainer}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Confirm Submission</Text>
               </View>
@@ -697,19 +1283,22 @@ const FaceDetectionCamera: React.FC = () => {
                   Are you sure you want to submit this photo?
                 </Text>
               </View>
+
               <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalCancelButton]}
-                  onPress={() => setShowConfirmModal(false)}
-                >
-                  <Text style={styles.modalCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalConfirmButton]}
-                  onPress={handleConfirmSubmit}
-                >
-                  <Text style={styles.modalConfirmButtonText}>Confirm</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.modalCancelButton]}
+                    onPress={() => setShowConfirmModal(false)}
+                  >
+                    <Text style={styles.modalCancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.modalConfirmButton]}
+                    onPress={handleConfirmSubmit}
+                  >
+                    <Text style={styles.modalConfirmButtonText}>Confirm</Text>
+                  </TouchableOpacity>
+                </>
               </View>
             </View>
           </View>
@@ -749,7 +1338,6 @@ const FaceDetectionCamera: React.FC = () => {
         </Modal>
         <Modal
           visible={showThankYouModal}
-          transparent={false} // Full screen modal, no transparency
           animationType="slide" // Slide in animation
         >
           <View style={styles.fullScreenModal}>
@@ -772,6 +1360,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#EEF2F6",
     justifyContent: "center",
     alignItems: "center",
+    width: "100%",
+    height: "auto",
   },
   contentContainer: {
     flex: 1,
@@ -796,6 +1386,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     justifyContent: "center",
     alignItems: "center",
+    paddingTop: 0,
   },
   fullScreenImage: {
     width: 250,
@@ -813,6 +1404,14 @@ const styles = StyleSheet.create({
   camera: {
     width: "100%",
     height: "100%",
+  },
+  // Add to your StyleSheet
+  limitReachedText: {
+    color: "#ff4444",
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 8,
+    fontStyle: "italic",
   },
   controlsContainer: {
     flex: 1,

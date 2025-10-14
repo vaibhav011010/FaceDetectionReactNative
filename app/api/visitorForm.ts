@@ -35,16 +35,21 @@ export const isServerOnline = async (): Promise<boolean> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch("https://webapptest3.online", {
-      method: "HEAD",
-      signal: controller.signal,
+    const response = await axiosInstance.get("/accounts/get-user-detail/", {
+      timeout: 5000, // 5 second timeout
+      headers: {
+        "Cache-Control": "no-cache",
+      },
     });
 
     clearTimeout(timeoutId);
 
     // Consider online if we get any valid response
-    if (response.ok || response.status < 500) {
-      console.log("✅ Server reachable");
+    if (
+      (response.status >= 200 && response.status < 300) ||
+      response.status === 401
+    ) {
+      console.log("✅ Server reachable (authentication may be required)");
       return true;
     }
 
@@ -277,227 +282,284 @@ export const submitVisitor = async (
   visitorMobileNo: string,
   visitingTenantId: number,
   visitorPhotoBase64: string
-): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-  warning?: string;
-}> => {
-  // Add this: Generate UUID for this record
+): Promise<{ success: boolean; data?: any; error?: string }> => {
   const recordUuid = Crypto.randomUUID();
+
   try {
     const currentUserId = await getCurrentUserId();
-    // Compress the image first
     const compressedPhotoBase64 = await compressImage(visitorPhotoBase64);
 
-    console.log("Submitting payload:", {
-      visitor_name: visitorName,
-      visitor_mobile_no: visitorMobileNo,
-      visiting_tenant_id: visitingTenantId,
-      //photoLength: compressedPhotoBase64.length,
-    });
-
-    // Generate a unique image name using timestamp
-    const timestamp = new Date().getTime();
-    const imageName = `visitor_${timestamp}.jpg`;
-
-    const createdDatetime = new Date().toISOString();
-
-    const photoObject = {
-      image_name: imageName,
-      image_base64: compressedPhotoBase64,
-    };
-
-    // Save image to file system instead of directly to database
-    const imageFilePath = await saveImageToFile(compressedPhotoBase64);
-
-    // Send to server
-    const response = await axiosInstance.post(
-      API_ENDPOINT,
-      {
-        visitor_name: visitorName,
-        photo: photoObject,
-        visitor_mobile_no: visitorMobileNo,
-        visiting_tenant_id: visitingTenantId,
-        uuid: recordUuid,
-        created_datetime: createdDatetime,
-      },
-      { metadata: { userId: currentUserId } }
-    );
-
-    console.log("About to send API request with data:", {
+    console.log("Storing visitor offline:", {
       visitor_name: visitorName,
       visitor_mobile_no: visitorMobileNo,
       visiting_tenant_id: visitingTenantId,
       record_uuid: recordUuid,
-      // Don't log the full base64 image
-      //photo_size: photoObject.image_base64.length,
     });
 
-    if (response.status !== 200 && response.status !== 201) {
-      console.warn(
-        `Unexpected response status: ${response.status}. Storing locally.`
-      );
-      await storeVisitorLocally(
-        visitorName,
-        visitorMobileNo,
-        visitingTenantId,
-        visitorPhotoBase64,
-        recordUuid,
-        createdDatetime
-      );
-      return {
-        success: false,
-        error: `Unexpected server status ${response.status}. Stored locally for sync.`,
-      };
-    }
+    // Generate unique image name
+    const timestamp = new Date().getTime();
+    const imageName = `visitor_${timestamp}.jpg`;
+    const createdDatetime = new Date().toISOString();
 
-    // console.log("API Response Status:", response.status);
-    // console.log("API Response Headers:", JSON.stringify(response.headers));
-    // console.log("API Response Data:", JSON.stringify(response.data));
+    // Save the compressed image to file system
+    const imageFilePath = await saveImageToFile(compressedPhotoBase64);
 
-    // Check if there's an ID field in the response - use consistent extraction
-    const responseId =
-      response.data?.id ||
-      response.data?.visitor_id ||
-      response.data?.data?.id ||
-      null;
+    // Store visitor locally (unsynced)
+    await database.write(async () => {
+      await database.get<Visitor>("visitors").create((visitor) => {
+        visitor.visitorName = visitorName;
+        visitor.visitorMobileNo = visitorMobileNo;
+        visitor.visitingTenantId = visitingTenantId;
+        visitor.visitorPhoto = imageFilePath;
+        visitor.visitorPhotoName = imageName;
+        visitor.createdByUserId = currentUserId;
+        visitor.timestamp = Date.now();
+        visitor.recordUuid = recordUuid;
+        visitor.createdDatetime = createdDatetime;
 
-    console.log("Extracted server ID:", responseId);
-    console.log("Saving to database with server ID:", responseId);
+        // Mark as unsynced since it hasn’t gone to the server yet
+        visitor.isSynced = false;
+        visitor.visitorSyncStatus = "not_synced";
+        visitor.serverId = null;
+      });
+    });
 
-    // Database operation with better error handling
-    try {
-      if ((response.status === 200 || response.status === 201) && responseId) {
-        await database.write(async () => {
-          await database.get<Visitor>("visitors").create((visitor) => {
-            visitor.visitorName = visitorName;
-            visitor.visitorMobileNo = visitorMobileNo;
-            visitor.visitingTenantId = visitingTenantId;
-            visitor.visitorPhoto = imageFilePath;
-            // visitor.visitorPhotoName = imageName;
-            visitor.createdByUserId = currentUserId;
-            visitor.isSynced = true;
-            visitor.visitorSyncStatus = "synced";
-            visitor.timestamp = Date.now();
-            visitor.serverId = responseId;
-            visitor.recordUuid = recordUuid;
-            visitor.createdDatetime = createdDatetime;
-          });
-        });
-      } else {
-        // Store locally as unsynced
-        await database.write(async () => {
-          await database.get<Visitor>("visitors").create((visitor) => {
-            visitor.visitorName = visitorName;
-            visitor.visitorMobileNo = visitorMobileNo;
-            visitor.visitingTenantId = visitingTenantId;
-            visitor.visitorPhoto = imageFilePath;
-            visitor.visitorPhotoName = imageName;
-            visitor.createdByUserId = currentUserId;
-            visitor.timestamp = Date.now();
-            visitor.recordUuid = recordUuid;
-            visitor.createdDatetime = createdDatetime;
-
-            // ❌ Do NOT mark as synced
-            visitor.isSynced = false;
-            visitor.visitorSyncStatus = "not_synced";
-            visitor.serverId = null;
-          });
-        });
-      }
-      return { success: true, data: response.data };
-    } catch (error: unknown) {
-      console.error("Database write error details:", error);
-
-      // Return partial success since API call worked but local storage failed
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      return {
-        success: true,
-        data: response.data,
-        warning: "API success but local storage failed. Error: " + errorMessage,
-      };
-    }
+    console.log("✅ Visitor stored offline successfully");
+    return { success: true, data: { recordUuid } };
   } catch (error: unknown) {
-    // Detailed error logging
-
-    console.error("=== SUBMIT VISITOR ERROR ===");
-    console.error("Error type:", typeof error);
-    console.error(
-      "Error message:",
-      error instanceof Error ? error.message : String(error)
-    );
-
-    const axiosError = error as any; // Type assertion for axios error properties
-
-    if (axiosError.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      console.error("Error status:", axiosError.response.status);
-
-      console.error(
-        "Error headers:",
-        JSON.stringify(axiosError.response.headers)
-      );
-      console.error("Error data:", JSON.stringify(axiosError.response.data));
-    } else if (axiosError.request) {
-      // The request was made but no response was received
-      console.error("No response received. Request:", axiosError.request);
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      console.error(
-        "Error in request setup:",
-        error instanceof Error ? error.message : String(error)
-      );
-    }
-    console.error("Error config:", axiosError.config);
-
-    // Network error handling remains the same
-    if (
-      error instanceof Error &&
-      error.message &&
-      error.message.includes("Network Error")
-    ) {
-      console.log("Network error detected, storing locally");
-
-      try {
-        const imageFilePath = await saveImageToFile(visitorPhotoBase64);
-        const imageName = `visitor_${Date.now()}.jpg`;
-        const currentUserId = await getCurrentUserId();
-
-        await database.write(async () => {
-          await database.get<Visitor>("visitors").create((visitor) => {
-            visitor.visitorName = visitorName;
-            visitor.visitorMobileNo = visitorMobileNo;
-            visitor.visitingTenantId = visitingTenantId;
-            visitor.visitorPhoto = imageFilePath;
-            visitor.visitorPhotoName = imageName;
-            visitor.timestamp = Date.now();
-            visitor.isSynced = false;
-            visitor.recordUuid = recordUuid;
-            visitor.createdByUserId = currentUserId;
-            visitor.visitorSyncStatus = "not_synced";
-            visitor.createdDatetime = new Date().toISOString();
-          });
-        });
-        console.log("Successfully stored locally for later sync");
-        return { success: false, error: "Data stored locally for sync" };
-      } catch (dbError: unknown) {
-        console.error("Failed to store locally:", dbError);
-        const dbErrorMessage =
-          dbError instanceof Error ? dbError.message : String(dbError);
-        return {
-          success: false,
-          error: "Network error and failed to store locally: " + dbErrorMessage,
-        };
-      }
-    }
-
+    console.error("❌ Error while storing visitor offline:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    return { success: false, error: errorMessage || "Unknown error occurred" };
+    return { success: false, error: errorMessage };
   }
 };
+
+// export const submitVisitor = async (
+//   visitorName: string,
+//   visitorMobileNo: string,
+//   visitingTenantId: number,
+//   visitorPhotoBase64: string
+// ): Promise<{
+//   success: boolean;
+//   data?: any;
+//   error?: string;
+//   warning?: string;
+// }> => {
+//   // Add this: Generate UUID for this record
+//   const recordUuid = Crypto.randomUUID();
+//   try {
+//     const currentUserId = await getCurrentUserId();
+//     // Compress the image first
+//     const compressedPhotoBase64 = await compressImage(visitorPhotoBase64);
+
+//     console.log("Submitting payload:", {
+//       visitor_name: visitorName,
+//       visitor_mobile_no: visitorMobileNo,
+//       visiting_tenant_id: visitingTenantId,
+//       //photoLength: compressedPhotoBase64.length,
+//     });
+
+//     // Generate a unique image name using timestamp
+//     const timestamp = new Date().getTime();
+//     const imageName = `visitor_${timestamp}.jpg`;
+
+//     const createdDatetime = new Date().toISOString();
+
+//     const photoObject = {
+//       image_name: imageName,
+//       image_base64: compressedPhotoBase64,
+//     };
+
+//     // Save image to file system instead of directly to database
+//     const imageFilePath = await saveImageToFile(compressedPhotoBase64);
+
+//     // Send to server
+//     const response = await axiosInstance.post(
+//       API_ENDPOINT,
+//       {
+//         visitor_name: visitorName,
+//         photo: photoObject,
+//         visitor_mobile_no: visitorMobileNo,
+//         visiting_tenant_id: visitingTenantId,
+//         uuid: recordUuid,
+//         created_datetime: createdDatetime,
+//       },
+//       { metadata: { userId: currentUserId } }
+//     );
+
+//     console.log("About to send API request with data:", {
+//       visitor_name: visitorName,
+//       visitor_mobile_no: visitorMobileNo,
+//       visiting_tenant_id: visitingTenantId,
+//       record_uuid: recordUuid,
+//       // Don't log the full base64 image
+//       //photo_size: photoObject.image_base64.length,
+//     });
+
+//     if (response.status !== 200 && response.status !== 201) {
+//       console.warn(
+//         `Unexpected response status: ${response.status}. Storing locally.`
+//       );
+//       await storeVisitorLocally(
+//         visitorName,
+//         visitorMobileNo,
+//         visitingTenantId,
+//         visitorPhotoBase64,
+//         recordUuid,
+//         createdDatetime
+//       );
+//       return {
+//         success: false,
+//         error: `Unexpected server status ${response.status}. Stored locally for sync.`,
+//       };
+//     }
+
+//     // console.log("API Response Status:", response.status);
+//     // console.log("API Response Headers:", JSON.stringify(response.headers));
+//     // console.log("API Response Data:", JSON.stringify(response.data));
+
+//     // Check if there's an ID field in the response - use consistent extraction
+//     const responseId =
+//       response.data?.id ||
+//       response.data?.visitor_id ||
+//       response.data?.data?.id ||
+//       response.data?.results?.[0]?.id ||
+//       null;
+
+//     console.log("Extracted server ID:", responseId);
+//     console.log("Saving to database with server ID:", responseId);
+
+//     // Database operation with better error handling
+//     try {
+//       if (response.status === 200 || response.status === 201) {
+//         await database.write(async () => {
+//           await database.get<Visitor>("visitors").create((visitor) => {
+//             visitor.visitorName = visitorName;
+//             visitor.visitorMobileNo = visitorMobileNo;
+//             visitor.visitingTenantId = visitingTenantId;
+//             visitor.visitorPhoto = imageFilePath;
+//             // visitor.visitorPhotoName = imageName;
+//             visitor.createdByUserId = currentUserId;
+//             visitor.isSynced = true;
+//             visitor.visitorSyncStatus = "synced";
+//             visitor.timestamp = Date.now();
+//             visitor.serverId = responseId;
+//             visitor.recordUuid = recordUuid;
+//             visitor.createdDatetime = createdDatetime;
+//           });
+//         });
+//       } else {
+//         // Store locally as unsynced
+//         await database.write(async () => {
+//           await database.get<Visitor>("visitors").create((visitor) => {
+//             visitor.visitorName = visitorName;
+//             visitor.visitorMobileNo = visitorMobileNo;
+//             visitor.visitingTenantId = visitingTenantId;
+//             visitor.visitorPhoto = imageFilePath;
+//             visitor.visitorPhotoName = imageName;
+//             visitor.createdByUserId = currentUserId;
+//             visitor.timestamp = Date.now();
+//             visitor.recordUuid = recordUuid;
+//             visitor.createdDatetime = createdDatetime;
+
+//             // ❌ Do NOT mark as synced
+//             visitor.isSynced = false;
+//             visitor.visitorSyncStatus = "not_synced";
+//             visitor.serverId = null;
+//           });
+//         });
+//       }
+//       return { success: true, data: response.data };
+//     } catch (error: unknown) {
+//       console.error("Database write error details:", error);
+
+//       // Return partial success since API call worked but local storage failed
+//       const errorMessage =
+//         error instanceof Error ? error.message : String(error);
+//       return {
+//         success: true,
+//         data: response.data,
+//         warning: "API success but local storage failed. Error: " + errorMessage,
+//       };
+//     }
+//   } catch (error: unknown) {
+//     // Detailed error logging
+
+//     console.error("=== SUBMIT VISITOR ERROR ===");
+//     console.error("Error type:", typeof error);
+//     console.error(
+//       "Error message:",
+//       error instanceof Error ? error.message : String(error)
+//     );
+
+//     const axiosError = error as any; // Type assertion for axios error properties
+
+//     if (axiosError.response) {
+//       // The request was made and the server responded with a status code
+//       // that falls out of the range of 2xx
+//       console.error("Error status:", axiosError.response.status);
+
+//       console.error(
+//         "Error headers:",
+//         JSON.stringify(axiosError.response.headers)
+//       );
+//       console.error("Error data:", JSON.stringify(axiosError.response.data));
+//     } else if (axiosError.request) {
+//       // The request was made but no response was received
+//       console.error("No response received. Request:", axiosError.request);
+//     } else {
+//       // Something happened in setting up the request that triggered an Error
+//       console.error(
+//         "Error in request setup:",
+//         error instanceof Error ? error.message : String(error)
+//       );
+//     }
+//     console.error("Error config:", axiosError.config);
+
+//     // Network error handling remains the same
+//     if (
+//       error instanceof Error &&
+//       error.message &&
+//       error.message.includes("Network Error")
+//     ) {
+//       console.log("Network error detected, storing locally");
+
+//       try {
+//         const imageFilePath = await saveImageToFile(visitorPhotoBase64);
+//         const imageName = `visitor_${Date.now()}.jpg`;
+//         const currentUserId = await getCurrentUserId();
+
+//         await database.write(async () => {
+//           await database.get<Visitor>("visitors").create((visitor) => {
+//             visitor.visitorName = visitorName;
+//             visitor.visitorMobileNo = visitorMobileNo;
+//             visitor.visitingTenantId = visitingTenantId;
+//             visitor.visitorPhoto = imageFilePath;
+//             visitor.visitorPhotoName = imageName;
+//             visitor.timestamp = Date.now();
+//             visitor.isSynced = false;
+//             visitor.recordUuid = recordUuid;
+//             visitor.createdByUserId = currentUserId;
+//             visitor.visitorSyncStatus = "not_synced";
+//             visitor.createdDatetime = new Date().toISOString();
+//           });
+//         });
+//         console.log("Successfully stored locally for later sync");
+//         return { success: false, error: "Data stored locally for sync" };
+//       } catch (dbError: unknown) {
+//         console.error("Failed to store locally:", dbError);
+//         const dbErrorMessage =
+//           dbError instanceof Error ? dbError.message : String(dbError);
+//         return {
+//           success: false,
+//           error: "Network error and failed to store locally: " + dbErrorMessage,
+//         };
+//       }
+//     }
+
+//     const errorMessage = error instanceof Error ? error.message : String(error);
+//     return { success: false, error: errorMessage || "Unknown error occurred" };
+//   }
+// };
 /**
  * Prepares a visitor record for sync
  */
@@ -735,22 +797,29 @@ export const syncVisitors = async (): Promise<{
       const syncPromises = batch.map(async (visitor) => {
         // Skip if backoff period hasn't elapsed
         const now = Date.now();
-        if (
-          visitor.lastSyncAttempt &&
-          now - visitor.lastSyncAttempt < 2 * 60_000
-        ) {
-          console.log(`Skipping ${visitor.recordUuid} due to back-off`);
-          //return false;
-        }
+        //for the rate per limit handleing we have to comment the below code out! for large number of records
+        // if (
+        //   visitor.lastSyncAttempt &&
+        //   now - visitor.lastSyncAttempt < 2 * 60_000
+        // ) {
+        //   console.log(`Skipping ${visitor.recordUuid} due to back-off`);
+        //   return false;
+        // }
 
         // Skip if too many retries (prevent infinite loops)
+        // if ((visitor.syncRetryCount ?? 0) >= 5) {
+        //   console.log(
+        //     `Max retries reached for ${visitor.recordUuid}, retrying anyway`
+        //   );
+        //   await new Promise((resolve) =>
+        //     setTimeout(resolve, (visitor.syncRetryCount ?? 0) * 2000)
+        //   );
+        // }
         if ((visitor.syncRetryCount ?? 0) >= 5) {
           console.log(
-            `Max retries reached for ${visitor.recordUuid}, retrying anyway`
+            `Max retries reached for ${visitor.recordUuid}, will still retry later`
           );
-          await new Promise((resolve) =>
-            setTimeout(resolve, (visitor.syncRetryCount ?? 0) * 2000)
-          );
+          // Don’t block, just use longer backoff
         }
 
         try {
@@ -919,23 +988,24 @@ export const cleanupOldImages = async (): Promise<void> => {
     // console.log("[CLEANUP] All image files in directory:", imagePaths);
 
     // Define a cutoff time (files older than 1 hour will be considered for deletion).
-    const oneHourAgo = Date.now() - 3600000;
+    const cutoff = Date.now() - 24 * 3600000;
     const filesToDelete: string[] = [];
 
-    // Check each image file to see if it's not in use and is older than the cutoff.
+    // Check each file
     for (const path of imagePaths) {
+      // Skip files still referenced by synced visitors
       if (!activeFilePaths.includes(path)) {
         const fileInfo = await FileSystem.getInfoAsync(path);
-        if (fileInfo.exists) {
+        if (fileInfo.exists && fileInfo.modificationTime! < cutoff) {
           filesToDelete.push(path);
         }
       }
     }
 
-    // Delete the unused files.
+    // Delete safely
     for (const filePath of filesToDelete) {
       await FileSystem.deleteAsync(filePath, { idempotent: true });
-      console.log(`[CLEANUP] Deleted unused file: ${filePath}`);
+      console.log(`[CLEANUP] Deleted old unused file: ${filePath}`);
     }
 
     console.log(
@@ -945,7 +1015,6 @@ export const cleanupOldImages = async (): Promise<void> => {
     console.error("[CLEANUP] Error cleaning up old images:", error);
   }
 };
-
 /**
  * Purges old synced visitor records to prevent database bloat
  * Keeps records for the specified number of days

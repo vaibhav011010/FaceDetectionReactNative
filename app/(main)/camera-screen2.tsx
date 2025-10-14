@@ -47,7 +47,7 @@ import {
 import { AppDispatch, RootState } from "../store";
 import { useDispatch, useSelector } from "react-redux";
 import { convertPhotoToBase64 } from "@/src/utility/photoConvertor";
-import { submitVisitor } from "../api/visitorForm";
+import { submitVisitor, syncVisitors } from "../api/visitorForm";
 import NextSvg from "@/src/utility/nextSvg";
 import StarIcon from "@/src/utility/starIcon";
 import CameraIcon from "@/src/utility/CameraSvg";
@@ -648,6 +648,133 @@ const FaceDetectionCamera: React.FC = () => {
       setCaptureAttemptsLeft((prev) => prev - 1);
     }, delay);
   }, [cleanupCamera, captureAttemptsLeft, isCaptureAgainDisabled]);
+  // const convertAndSubmit = async () => {
+  //   console.log("🔥 convertAndSubmit started");
+  //   setIsLoading(true);
+  //   setIsCaptureAgainDisabled(true);
+
+  //   if (!capturedPhoto) {
+  //     console.log("❌ No captured photo");
+  //     await showDialog({
+  //       title: "Error",
+  //       message: "No photo to submit",
+  //       actions: [
+  //         {
+  //           label: "OK",
+  //           mode: "contained",
+  //           onPress: () => {},
+  //         },
+  //       ],
+  //     });
+  //     setIsLoading(false);
+  //     setIsCaptureAgainDisabled(false);
+  //     return;
+  //   }
+
+  //   let shouldShowModal = false;
+
+  //   try {
+  //     console.log("✅ Starting submission process");
+  //     setShowConfirmModal(false);
+
+  //     // Prepare base64
+  //     let base64String = capturedPhotoBase64;
+  //     if (!base64String) {
+  //       console.log("📷 Converting photo to base64");
+  //       const result = await convertPhotoToBase64(capturedPhoto);
+  //       base64String =
+  //         typeof result === "string" ? result : result.image_base64;
+  //     }
+
+  //     let result;
+  //     let isOfflineScenario = false;
+
+  //     console.log("🌐 Attempting API submission with 4 second timeout");
+  //     try {
+  //       result = await withTimeoutSubmit(
+  //         submitVisitor(
+  //           visitorNameRedux,
+  //           visitorMobileRedux,
+  //           Number(visitingCompanyRedux),
+  //           base64String
+  //         ),
+  //         4000
+  //       );
+  //       console.log("✅ API submission result:", result);
+  //     } catch (error: any) {
+  //       console.log("❌ API submission failed/timeout:", error.message);
+  //       isOfflineScenario = true;
+  //       result = {
+  //         success: false,
+  //         error: "stored locally",
+  //       };
+  //     }
+
+  //     const offlineStored = isOfflineScenario;
+
+  //     // Check if data was stored locally (even if success is false)
+  //     const wasStoredLocally =
+  //       result.error && result.error.includes("stored locally");
+
+  //     console.log("📊 Submit result:", {
+  //       success: result.success,
+  //       offlineStored,
+  //       isOfflineScenario,
+  //       wasStoredLocally,
+  //       error: result.error,
+  //     });
+
+  //     // Show modal if successful OR if stored locally
+  //     if (result.success || offlineStored || wasStoredLocally) {
+  //       console.log("🎯 Success or offline scenario - should show modal");
+  //       shouldShowModal = true;
+  //       setCapturedPhoto(null);
+  //       resetStates(true);
+  //       console.log("🎯 shouldShowModal set to:", shouldShowModal);
+  //     } else {
+  //       console.log("💥 Complete failure - navigating immediately");
+  //       resetStates(true);
+  //       router.replace("/checkin-screen");
+  //     }
+  //   } catch (error) {
+  //     console.error("💥 Unexpected error in convertAndSubmit:", error);
+  //     await showDialog({
+  //       title: "Submit Failed",
+  //       message: "Visitor check-in submission failed. Please try again.",
+  //       actions: [
+  //         {
+  //           label: "OK",
+  //           mode: "contained",
+  //           onPress: () => {},
+  //         },
+  //       ],
+  //     });
+  //     setIsCaptureAgainDisabled(false);
+  //   } finally {
+  //     console.log("🏁 Finally block - turning off loading");
+  //     setIsLoading(false);
+
+  //     console.log("🎭 Finally block - shouldShowModal:", shouldShowModal);
+
+  //     if (shouldShowModal) {
+  //       console.log("🎉 About to show thank you modal in 100ms");
+  //       setTimeout(() => {
+  //         console.log("🎭 Setting showThankYouModal to true");
+  //         setShowThankYouModal(true);
+
+  //         setTimeout(() => {
+  //           console.log("🚀 Closing modal and navigating after 2 seconds");
+  //           setShowThankYouModal(false);
+  //           router.replace("/checkin-screen");
+  //         }, 2000);
+  //       }, 100);
+  //     } else {
+  //       console.log("❌ shouldShowModal is false - not showing modal");
+  //     }
+  //   }
+  // };
+  // Handle cancel
+
   const convertAndSubmit = async () => {
     console.log("🔥 convertAndSubmit started");
     setIsLoading(true);
@@ -658,13 +785,7 @@ const FaceDetectionCamera: React.FC = () => {
       await showDialog({
         title: "Error",
         message: "No photo to submit",
-        actions: [
-          {
-            label: "OK",
-            mode: "contained",
-            onPress: () => {},
-          },
-        ],
+        actions: [{ label: "OK", mode: "contained", onPress: () => {} }],
       });
       setIsLoading(false);
       setIsCaptureAgainDisabled(false);
@@ -674,10 +795,10 @@ const FaceDetectionCamera: React.FC = () => {
     let shouldShowModal = false;
 
     try {
-      console.log("✅ Starting submission process");
+      console.log("✅ Starting offline submission process");
       setShowConfirmModal(false);
 
-      // Prepare base64
+      // Convert photo to base64 if not already
       let base64String = capturedPhotoBase64;
       if (!base64String) {
         console.log("📷 Converting photo to base64");
@@ -686,53 +807,30 @@ const FaceDetectionCamera: React.FC = () => {
           typeof result === "string" ? result : result.image_base64;
       }
 
-      let result;
-      let isOfflineScenario = false;
+      // Directly store visitor offline (no timeout, no API)
+      console.log("💾 Storing visitor offline...");
+      const result = await submitVisitor(
+        visitorNameRedux,
+        visitorMobileRedux,
+        Number(visitingCompanyRedux),
+        base64String
+      );
 
-      console.log("🌐 Attempting API submission with 4 second timeout");
-      try {
-        result = await withTimeoutSubmit(
-          submitVisitor(
-            visitorNameRedux,
-            visitorMobileRedux,
-            Number(visitingCompanyRedux),
-            base64String
-          ),
-          4000
-        );
-        console.log("✅ API submission result:", result);
-      } catch (error: any) {
-        console.log("❌ API submission failed/timeout:", error.message);
-        isOfflineScenario = true;
-        result = {
-          success: false,
-          error: "stored locally",
-        };
-      }
+      console.log("📊 Offline store result:", result);
 
-      const offlineStored = isOfflineScenario;
+      if (result.success) {
+        console.log("🎯 Visitor stored locally - showing thank you modal");
 
-      // Check if data was stored locally (even if success is false)
-      const wasStoredLocally =
-        result.error && result.error.includes("stored locally");
-
-      console.log("📊 Submit result:", {
-        success: result.success,
-        offlineStored,
-        isOfflineScenario,
-        wasStoredLocally,
-        error: result.error,
-      });
-
-      // Show modal if successful OR if stored locally
-      if (result.success || offlineStored || wasStoredLocally) {
-        console.log("🎯 Success or offline scenario - should show modal");
         shouldShowModal = true;
         setCapturedPhoto(null);
         resetStates(true);
-        console.log("🎯 shouldShowModal set to:", shouldShowModal);
       } else {
-        console.log("💥 Complete failure - navigating immediately");
+        console.log("💥 Local storage failed:", result.error);
+        await showDialog({
+          title: "Storage Failed",
+          message: "Could not store visitor locally. Please try again.",
+          actions: [{ label: "OK", mode: "contained", onPress: () => {} }],
+        });
         resetStates(true);
         router.replace("/checkin-screen");
       }
@@ -741,20 +839,12 @@ const FaceDetectionCamera: React.FC = () => {
       await showDialog({
         title: "Submit Failed",
         message: "Visitor check-in submission failed. Please try again.",
-        actions: [
-          {
-            label: "OK",
-            mode: "contained",
-            onPress: () => {},
-          },
-        ],
+        actions: [{ label: "OK", mode: "contained", onPress: () => {} }],
       });
       setIsCaptureAgainDisabled(false);
     } finally {
       console.log("🏁 Finally block - turning off loading");
       setIsLoading(false);
-
-      console.log("🎭 Finally block - shouldShowModal:", shouldShowModal);
 
       if (shouldShowModal) {
         console.log("🎉 About to show thank you modal in 100ms");
@@ -773,7 +863,7 @@ const FaceDetectionCamera: React.FC = () => {
       }
     }
   };
-  // Handle cancel
+
   const handleCancel = () => {
     setShowCancelModal(true);
   };
@@ -1041,19 +1131,19 @@ const FaceDetectionCamera: React.FC = () => {
       padding: isLandscape ? 10 : 20,
     },
     instructionText: {
-      fontSize: isTablet ? 18 : 16,
+      fontSize: isTablet ? 19 : 16,
       fontWeight: "500",
       textAlign: "center",
       color: "#001973",
     },
     cancelButtonText: {
       color: "#03045E",
-      fontSize: isTablet ? 20 : 14,
+      fontSize: isTablet ? 21 : 15,
       fontFamily: "OpenSans_Condensed-Bold",
     },
     submitButtonText: {
       color: "white",
-      fontSize: isTablet ? 20 : 14,
+      fontSize: isTablet ? 21 : 15,
       fontFamily: "OpenSans_Condensed-Bold",
     },
     // Modal styles remain mostly the same but can be made responsive
@@ -1529,7 +1619,7 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     color: "#03045E",
-    fontSize: isTablet ? 20 : 14,
+    fontSize: isTablet ? 21 : 15,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   submitButton: {
@@ -1546,7 +1636,7 @@ const styles = StyleSheet.create({
   },
   submitButtonText: {
     color: "white",
-    fontSize: isTablet ? 20 : 14,
+    fontSize: isTablet ? 21 : 15,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   captureAgainButton: {
@@ -1566,7 +1656,7 @@ const styles = StyleSheet.create({
   captureAgainText: {
     color: "#FAFAFA",
     fontFamily: "OpenSans_Condensed-SemiBold",
-    fontSize: 14,
+    fontSize: 15,
     marginLeft: 10,
   },
   countdownText: {
@@ -1717,7 +1807,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   countdownInstructions: {
-    fontSize: 18,
+    fontSize: 19,
     color: "#333",
     marginBottom: 30,
     textAlign: "center",
@@ -1729,7 +1819,7 @@ const styles = StyleSheet.create({
     color: "#03045E",
   },
   captureCountdownText: {
-    fontSize: 18,
+    fontSize: 19,
     color: "#fff",
     marginTop: 10,
   },

@@ -801,15 +801,15 @@ const styles = StyleSheet.create({
   },
   welcomeText: {
     color: "#03045E",
-    fontSize: isTablet ? 32 : 20,
+    fontSize: isTablet ? 34 : 22,
     marginBottom: 5,
-    lineHeight: isTablet ? 38 : 25,
+    lineHeight: isTablet ? 40 : 25,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   infoText: {
     color: "#03045E",
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: isTablet ? 22 : 15,
+    fontSize: isTablet ? 23 : 16,
     lineHeight: isTablet ? 33 : 22.5,
     marginBottom: 40,
   },
@@ -853,7 +853,7 @@ const styles = StyleSheet.create({
   },
   signInButtonText: {
     color: "#FFFAFA",
-    fontSize: isTablet ? 18 : 15,
+    fontSize: isTablet ? 20 : 16,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   linkContainer: {

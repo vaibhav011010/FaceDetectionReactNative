@@ -154,7 +154,7 @@ export default function CheckinScreen() {
     },
     welcomeText: {
       fontFamily: "OpenSans_Condensed-Bold",
-      fontSize: isTablet ? (isLandscape ? 32 : 35) : isLandscape ? 22 : 25,
+      fontSize: isTablet ? (isLandscape ? 33 : 36) : isLandscape ? 23 : 26,
       color: "#03045E",
       textAlign: "center",
       marginBottom: isLandscape ? 15 : 20,
@@ -181,7 +181,7 @@ export default function CheckinScreen() {
     },
     buttonText: {
       fontFamily: "OpenSans_Condensed-Bold",
-      fontSize: isTablet ? (isLandscape ? 18 : 20) : isLandscape ? 16 : 18,
+      fontSize: isTablet ? (isLandscape ? 19 : 21) : isLandscape ? 16 : 19,
       color: "#FAFAFA",
       marginHorizontal: 10,
     },

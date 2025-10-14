@@ -8,8 +8,8 @@ import {
 } from "./auth";
 
 const API_BASE_URL = "https://quikcheckapi.site/";
-
-//const API_BASE_URL = "https://webapptest3.online";
+// Production "https://quikcheckapi.site/"
+// Test = "https://webapptest3.online";
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

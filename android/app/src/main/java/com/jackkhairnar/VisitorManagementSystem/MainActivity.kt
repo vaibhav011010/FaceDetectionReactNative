@@ -3,6 +3,8 @@ package com.jackkhairnar.VisitorManagementSystem
 import android.os.Build
 import android.os.Bundle
 
+import android.view.WindowManager // 👈 add this import
+
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -17,6 +19,9 @@ class MainActivity : ReactActivity() {
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+    
+      // 👇 keep screen always on
+    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
   }
 
   /**

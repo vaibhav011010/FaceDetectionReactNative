@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useContext, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -40,6 +40,8 @@ import {
 } from "@/src/utility/UniversalDialogProvider";
 
 import { setIsLoading } from "../store/slices/visitorSlice";
+import axiosBase from "../api/axiosBase";
+import { useFocusEffect } from "@react-navigation/native";
 
 const { width, height } = Dimensions.get("window");
 
@@ -69,7 +71,12 @@ const forgotPassword = (props: Props) => {
       StatusBar.setHidden(false, "none");
     };
   }, []);
-
+  useFocusEffect(
+    useCallback(() => {
+      // Clear email error and reset validation state whenever the screen is focused
+      dispatch(setForgotPasswordEmailError(null));
+    }, [dispatch])
+  );
   const validateEmail = (email: string): void => {
     // Simple validation for now
     if (!email) {
@@ -78,21 +85,30 @@ const forgotPassword = (props: Props) => {
       dispatch(clearForgotPasswordEmailError());
     }
   };
+
   const handleSubmitEmail = async (): Promise<void> => {
+    Keyboard.dismiss();
+
+    // --- Run local validation synchronously first ---
+    const trimmedEmail = email.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const isEmailOk = emailPattern.test(trimmedEmail);
+
+    // Update validation UI
+    validateEmail(trimmedEmail);
+
+    // --- If email invalid, stop immediately ---
+    if (!isEmailOk) {
+      console.log("❌ Email validation failed. Not calling API.");
+      return;
+    }
+
     try {
-      // Validate email before submitting
-      validateEmail(email);
-
-      // If there's an error, don't proceed
-      if (!isEmailValid) {
-        return;
-      }
-
       // Dispatch loading state if you're using Redux
       setIsLoading(true);
 
       // Make API call to generate OTP
-      const response = await axiosInstance.post("/accounts/password-reset/", {
+      const response = await axiosBase.post("/accounts/password-reset/", {
         email: email,
       });
 
@@ -390,7 +406,7 @@ const styles = StyleSheet.create({
   },
   welcomeText: {
     color: "#03045E",
-    fontSize: isTablet ? 32 : 20,
+    fontSize: isTablet ? 34 : 22,
     marginBottom: 5,
     lineHeight: isTablet ? 38 : 25,
     fontFamily: "OpenSans_Condensed-Bold",
@@ -398,7 +414,7 @@ const styles = StyleSheet.create({
   infoText: {
     color: "#03045E",
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: isTablet ? 22 : 15,
+    fontSize: isTablet ? 23 : 16,
     lineHeight: isTablet ? 33 : 22.5,
     marginBottom: 40,
   },
@@ -437,7 +453,7 @@ const styles = StyleSheet.create({
   },
   signInButtonText: {
     color: "#FFFAFA",
-    fontSize: isTablet ? 18 : 15,
+    fontSize: isTablet ? 20 : 16,
 
     fontFamily: "OpenSans_Condensed-Bold",
   },

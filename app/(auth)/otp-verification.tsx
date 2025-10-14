@@ -31,6 +31,7 @@ import {
   UniversalDialogProvider,
   useUniversalDialog,
 } from "@/src/utility/UniversalDialogProvider";
+import axiosBase from "../api/axiosBase";
 
 const { width, height } = Dimensions.get("window");
 
@@ -150,17 +151,26 @@ const otpVerification = (props: Props) => {
   const handleSubmitOtp = async (): Promise<void> => {
     Keyboard.dismiss();
 
+    const isOtpOk = otp.trim().length === 6;
+    const isPassOk = password.trim().length >= 8;
+    const isConfirmOk =
+      confirmPassword.trim().length > 0 && confirmPassword === password;
+
     // Validate OTP and passwords
     validateOTP(otp);
     validatePassword(password);
     validateConfirmPassword(confirmPassword, password);
 
-    if (!isOTPValid || !isPasswordValid || !isConfirmPasswordValid) return;
+    // --- If validation fails, stop here ---
+    if (!isOtpOk || !isPassOk || !isConfirmOk) {
+      console.log("❌ Validation failed. Not submitting to API.");
+      return; // ⛔️ Don’t call API
+    }
 
     try {
       setIsLoading(true);
 
-      const response = await axiosInstance.post(
+      const response = await axiosBase.post(
         `/accounts/password-reset-confirm/${otp}/`,
         {
           email,
@@ -171,29 +181,30 @@ const otpVerification = (props: Props) => {
       );
 
       console.log("OTP Verified Successfully:", response.data);
+      try {
+        await AsyncStorage.setItem(
+          "credentials",
+          JSON.stringify({ email, password })
+        );
+        console.log("🔐 New password saved to AsyncStorage after reset");
+      } catch (e) {
+        console.error("❌ Failed to store new password:", e);
+      }
+
+      // ✅ Navigate IMMEDIATELY (don't wait for dialog)
+      if (router.canDismiss()) {
+        router.dismissAll();
+      }
+      router.replace("/login");
 
       showDialog({
         title: "Success",
-        message: "Your password has been reset!",
+        message: "Your password has been reset successfully!",
         actions: [
           {
             label: "OK",
             mode: "contained",
-            onPress: async () => {
-              try {
-                await AsyncStorage.setItem(
-                  "credentials",
-                  JSON.stringify({ email, password })
-                );
-                console.log(
-                  "🔐 New password saved to AsyncStorage after reset"
-                );
-              } catch (e) {
-                console.error("❌ Failed to store new password:", e);
-              }
-
-              router.replace("/login");
-            },
+            onPress: () => {}, // Just closes the dialog
           },
         ],
       });
@@ -266,7 +277,7 @@ const otpVerification = (props: Props) => {
 
       console.log("Resending OTP for:", email);
 
-      const response = await axiosInstance.post("/accounts/password-reset/", {
+      const response = await axiosBase.post("/accounts/password-reset/", {
         email,
       });
 
@@ -600,7 +611,7 @@ const otpVerification = (props: Props) => {
                   textDecorationLine: resendTimer > 0 ? "none" : "underline",
                   fontFamily: "OpenSans_Condensed-bold",
 
-                  fontSize: 13, // Adjust as needed
+                  fontSize: 14, // Adjust as needed
                 }}
               >
                 Resend OTP ({formatTime(resendTimer)})
@@ -653,7 +664,7 @@ const styles = StyleSheet.create({
   },
   welcomeText: {
     color: "#03045E",
-    fontSize: isTablet ? 32 : 20,
+    fontSize: isTablet ? 34 : 22,
     marginBottom: 5,
     lineHeight: isTablet ? 38 : 25,
     fontFamily: "OpenSans_Condensed-Bold",
@@ -661,7 +672,7 @@ const styles = StyleSheet.create({
   infoText: {
     color: "#03045E",
     fontFamily: "OpenSans_Condensed-Bold",
-    fontSize: isTablet ? 22 : 15,
+    fontSize: isTablet ? 23 : 16,
     lineHeight: isTablet ? 33 : 22.5,
     marginBottom: 40,
   },
@@ -700,7 +711,7 @@ const styles = StyleSheet.create({
   },
   signInButtonText: {
     color: "#FFFAFA",
-    fontSize: isTablet ? 18 : 15,
+    fontSize: isTablet ? 20 : 16,
 
     fontFamily: "OpenSans_Condensed-Bold",
   },

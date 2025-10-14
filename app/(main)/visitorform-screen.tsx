@@ -64,7 +64,9 @@ import NextSvg from "@/src/utility/nextSvg";
 const { width, height } = Dimensions.get("window");
 export const isTablet = width >= 768;
 const windowWidth = Dimensions.get("window").width;
-
+interface VisitorState {
+  additionalVisitors: number;
+}
 const useResponsiveDimensions = () => {
   const [dimensions, setDimensions] = useState(() => {
     const window = Dimensions.get("window");
@@ -72,7 +74,7 @@ const useResponsiveDimensions = () => {
     return {
       windowWidth: window.width,
       windowHeight: window.height,
-      screenHeight: screen.height, // Full screen height
+      screenHeight: screen.height,
     };
   });
 
@@ -101,6 +103,8 @@ const useResponsiveDimensions = () => {
 export default function VisitorFormScreen() {
   const router = useRouter();
   const user = useSelector(selectUser);
+
+  const [additionalVisitors, setAdditionalVisitors] = useState<number>(0);
 
   const { fontScale } = useWindowDimensions();
   const mobileFontSize = 14;
@@ -377,6 +381,7 @@ export default function VisitorFormScreen() {
     dispatch(setCompanyError(null));
     dispatch(setMobileError(null));
     dispatch(setVisitorNameError(null));
+    dispatch(setIsMobileValid(true));
     dispatch(setCompanyDropdownVisible(false));
     // Reset visitor form state by dispatching the resetForm or clear actions
     dispatch(clearVisitorName());
@@ -438,7 +443,7 @@ export default function VisitorFormScreen() {
       fontWeight: "600",
     },
     refreshHeaderSubText: {
-      fontSize: responsiveFontSize - 2,
+      fontSize: responsiveFontSize - 1,
       color: "#6c757d",
       fontFamily: "OpenSans_Condensed-Regular",
       marginTop: 2,
@@ -469,7 +474,7 @@ export default function VisitorFormScreen() {
       fontWeight: "500",
     },
     noResultsSubText: {
-      fontSize: responsiveFontSize - 2,
+      fontSize: responsiveFontSize - 1,
       color: "#adb5bd",
       fontFamily: "OpenSans_Condensed-Regular",
       textAlign: "center",
@@ -487,7 +492,7 @@ export default function VisitorFormScreen() {
       marginBottom: 2,
     },
     dropdownIdText: {
-      fontSize: responsiveFontSize - 2,
+      fontSize: responsiveFontSize - 1,
       color: "#6c757d",
       fontFamily: "OpenSans_Condensed-Regular",
     },
@@ -512,13 +517,48 @@ export default function VisitorFormScreen() {
       textAlign: "center",
     },
     emptyStateSubText: {
-      fontSize: responsiveFontSize - 2,
+      fontSize: responsiveFontSize - 1,
       color: "#adb5bd",
       fontFamily: "OpenSans_Condensed-Regular",
       textAlign: "center",
       marginTop: 4,
     },
   });
+
+  // --- Decrement Visitors ---
+  const handleDecrementVisitors = (): void => {
+    if (additionalVisitors > 0) {
+      const newCount = additionalVisitors - 1;
+      setAdditionalVisitors(newCount);
+
+      const nameOnly = visitorName.replace(/\s*\+\d+\s*$/, "");
+      const combinedName =
+        newCount > 0 && nameOnly.length > 0
+          ? `${nameOnly} +${newCount}`
+          : nameOnly;
+
+      dispatch(setVisitorName(combinedName));
+      console.log("visitorName combined:", combinedName);
+    }
+  };
+
+  const handleIncrementVisitors = (): void => {
+    if (additionalVisitors < 500) {
+      const newCount = additionalVisitors + 1;
+      setAdditionalVisitors(newCount);
+
+      const nameOnly = visitorName.replace(/\s*\+\d+\s*$/, "");
+      const combinedName =
+        nameOnly.length > 0 ? `${nameOnly} +${newCount}` : nameOnly;
+
+      dispatch(setVisitorName(combinedName));
+      console.log("visitorName combined:", combinedName);
+    }
+  };
+  const handleClearNameAndCounter = (): void => {
+    handleClearName();
+    setAdditionalVisitors(0);
+  };
 
   return (
     <SafeAreaView style={styles.safeAreaContainer}>
@@ -591,6 +631,51 @@ export default function VisitorFormScreen() {
                       </View>
                     </Modal>
 
+                    {visitorName && visitorName.trim().length > 0 && (
+                      <View style={styles.counterRow}>
+                        {/* Suffix Badge */}
+                        {/* {additionalVisitors > 0 && (
+                          <View style={styles.suffixBadge}>
+                            <Text style={styles.suffixText}>
+                              +{additionalVisitors}
+                            </Text>
+                          </View>
+                        )} */}
+
+                        {/* Counter Buttons */}
+                        <View style={styles.counterContainer}>
+                          <TouchableOpacity
+                            onPress={handleDecrementVisitors}
+                            style={[
+                              styles.counterButton,
+                              additionalVisitors === 0 &&
+                                styles.counterButtonDisabled,
+                            ]}
+                            disabled={additionalVisitors === 0}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={[
+                                styles.counterButtonText,
+                                additionalVisitors === 0 &&
+                                  styles.counterButtonTextDisabled,
+                              ]}
+                            >
+                              −
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={handleIncrementVisitors}
+                            style={styles.counterButton}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.counterButtonText}>+</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+
                     {/* Visitor Name Input */}
                     <View style={styles.inputContainer}>
                       <PaperTextInput
@@ -614,15 +699,71 @@ export default function VisitorFormScreen() {
                         }
                         textColor="#03045E"
                         maxLength={50}
-                        value={visitorName}
+                        value={visitorName} // ✅ CHANGED
                         onChangeText={(text) => {
-                          //  const filteredText = text.replace(/[^a-zA-Z\s]/g, "");
-                          dispatch(setVisitorName(text));
-                          // Clear error when user starts typing a non-empty value
-                          if (text.trim().length > 0) {
+                          // Don't auto-reappend suffix when user is deleting characters
+                          const isDeleting = text.length < visitorName.length;
+
+                          // Extract manually typed +number (e.g. "John +3")
+                          const manualSuffixMatch =
+                            text.match(/\s+\+(\d+)\s*$/);
+                          const manualCount = manualSuffixMatch
+                            ? parseInt(manualSuffixMatch[1], 10)
+                            : null;
+
+                          // Remove suffix part for clean name
+                          const nameOnly = text.replace(/\s*\+\d+\s*$/, "");
+
+                          // ✅ FIXED: Allow letters, spaces, and "+"
+                          const filteredName = nameOnly.replace(
+                            /[^a-zA-Z\s+]/g,
+                            ""
+                          );
+
+                          let newCount = additionalVisitors;
+
+                          // ✅ NEW: If user manually typed +3, update counter
+                          if (
+                            manualCount !== null &&
+                            manualCount !== additionalVisitors
+                          ) {
+                            newCount = Math.min(manualCount, 500); // Cap at max 500
+                            setAdditionalVisitors(newCount);
+                          }
+                          // ✅ NEW: If user erased the suffix (no manual count found but was there before)
+                          else if (
+                            manualCount === null &&
+                            additionalVisitors > 0 &&
+                            isDeleting
+                          ) {
+                            newCount = 0;
+                            setAdditionalVisitors(0);
+                          }
+
+                          // Decide what to show:
+                          // - If user is deleting, don't force-add suffix again
+                          // - Otherwise, combine with suffix
+                          const combinedName =
+                            isDeleting || newCount === 0
+                              ? filteredName
+                              : `${filteredName} +${newCount}`;
+
+                          dispatch(setVisitorName(combinedName));
+                          console.log("visitorName combined:", combinedName);
+
+                          if (filteredName.trim().length > 0) {
                             dispatch(setVisitorNameError(null));
                           }
                         }}
+                        // onChangeText={(text) => {
+                        //   const filteredText = text.replace(/[^a-zA-Z\s]/g, "");
+                        //   dispatch(setVisitorName(filteredText));
+                        //   // Clear error when user starts typing a non-empty value
+                        //   if (filteredText.trim().length > 0) {
+                        //     dispatch(setVisitorNameError(null));
+                        //   }
+                        // }}
+
                         mode="outlined"
                         outlineStyle={{
                           borderWidth: 1,
@@ -644,17 +785,66 @@ export default function VisitorFormScreen() {
                             background: "#EEF2F6",
                           },
                         }}
+                        // right={
+                        //   // ✅ COMPLETELY REPLACED
+                        //   <View style={styles.rightIconsContainer}>
+                        //     {/* Counter Buttons */}
+                        //     {visitorName && visitorName.trim().length > 0 && (
+                        //       <View style={styles.counterContainer}>
+                        //         <TouchableOpacity
+                        //           onPress={handleDecrementVisitors}
+                        //           style={[
+                        //             styles.counterButton,
+                        //             additionalVisitors === 0 &&
+                        //               styles.counterButtonDisabled,
+                        //           ]}
+                        //           disabled={additionalVisitors === 0}
+                        //           activeOpacity={0.7}
+                        //         >
+                        //           <Text
+                        //             style={[
+                        //               styles.counterButtonText,
+                        //               additionalVisitors === 0 &&
+                        //                 styles.counterButtonTextDisabled,
+                        //             ]}
+                        //           >
+                        //             −
+                        //           </Text>
+                        //         </TouchableOpacity>
+
+                        //         <TouchableOpacity
+                        //           onPress={handleIncrementVisitors}
+                        //           style={styles.counterButton}
+                        //           activeOpacity={0.7}
+                        //         >
+                        //           <Text style={styles.counterButtonText}>
+                        //             +
+                        //           </Text>
+                        //         </TouchableOpacity>
+                        //       </View>
+                        //     )}
+
+                        //     {/* Clear Button */}
+                        //     {visitorName && (
+                        //       <PaperTextInput.Icon
+                        //         icon="close-circle-outline"
+                        //         onPress={handleClearNameAndCounter}
+                        //         color="#03045E"
+                        //         size={22}
+                        //       />
+                        //     )}
+                        //   </View>
+                        // }
                         right={
                           visitorName ? (
                             <PaperTextInput.Icon
                               icon="close-circle-outline"
-                              onPress={handleClearName}
+                              onPress={handleClearNameAndCounter}
                               color="#03045E"
                               size={22}
                             />
                           ) : null
                         }
-                        selectionColor="#03045E"
                       />
                       {visitorNameError ? (
                         <Text
@@ -669,6 +859,58 @@ export default function VisitorFormScreen() {
                         </Text>
                       ) : null}
                     </View>
+
+                    {/* Helper text - ✅ ADDED below TextInput */}
+                    {/* {additionalVisitors > 0 && !visitorNameError && (
+                        <Text
+                          style={{
+                            color: "#03045E",
+                            fontSize: responsiveFontSize - 3,
+                            marginLeft: 5,
+                            marginTop: 2,
+                            fontFamily: "OpenSans_Condensed-Regular",
+                            opacity: 0.7,
+                          }}
+                        >
+                          +{additionalVisitors} additional{" "}
+                          {additionalVisitors === 1 ? "visitor" : "visitors"}
+                        </Text>
+                      )} */}
+                    {/* Counter overlay */}
+                    {/* {visitorName && visitorName.trim().length > 0 && (
+                        <View style={styles.rightOverlay}>
+                          <View style={styles.counterContainer}>
+                            <TouchableOpacity
+                              onPress={handleDecrementVisitors}
+                              style={[
+                                styles.counterButton,
+                                additionalVisitors === 0 &&
+                                  styles.counterButtonDisabled,
+                              ]}
+                              disabled={additionalVisitors === 0}
+                              activeOpacity={0.7}
+                            >
+                              <Text
+                                style={[
+                                  styles.counterButtonText,
+                                  additionalVisitors === 0 &&
+                                    styles.counterButtonTextDisabled,
+                                ]}
+                              >
+                                −
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              onPress={handleIncrementVisitors}
+                              style={styles.counterButton}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.counterButtonText}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View> */}
+                    {/* )} */}
 
                     {/* Visitor Mobile Input */}
                     <View style={styles.inputContainer}>
@@ -812,7 +1054,6 @@ export default function VisitorFormScreen() {
                             />
                           ) : null
                         }
-                        selectionColor="#03045E"
                       />
                       {companyError ? (
                         <Text
@@ -1118,6 +1359,74 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
   },
+  rightIconsContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  rightOverlay: {
+    position: "absolute",
+    right: 50, // leave space for the ✕ icon on the far right
+    top: "50%",
+    transform: [{ translateY: -14 }],
+    flexDirection: "row",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  counterRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end", // align row to right
+    alignItems: "center",
+    width: "80%",
+    marginBottom: 4, // spacing between row and input box
+  },
+
+  suffixBadge: {
+    backgroundColor: "#EEF2F6",
+    borderWidth: 1,
+    borderColor: "#03045E",
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 8,
+  },
+
+  suffixText: {
+    color: "#03045E",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  counterContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 6,
+    overflow: "hidden",
+  },
+
+  counterButton: {
+    width: 54,
+    height: 34,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#03045E",
+  },
+
+  counterButtonDisabled: {
+    backgroundColor: "#03045E",
+    opacity: 0.5,
+  },
+
+  counterButtonText: {
+    color: "#FFFFFF",
+    fontSize: 20,
+    fontWeight: "bold",
+    lineHeight: 20,
+  },
+
+  counterButtonTextDisabled: {
+    opacity: 0.5,
+  },
   borderContainer: {
     padding: 15,
     backgroundColor: "#EEF2F6",
@@ -1368,7 +1677,7 @@ const styles = StyleSheet.create({
   },
   canceltext: {
     color: "#02023C",
-    fontSize: isTablet ? 20 : 14,
+    fontSize: isTablet ? 21 : 15,
     fontFamily: "OpenSans_Condensed-Bold",
   },
   submitButton: {
@@ -1381,7 +1690,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: "white",
-    fontSize: isTablet ? 20 : 14,
+    fontSize: isTablet ? 21 : 15,
     fontFamily: "OpenSans_Condensed-Bold",
   },
 });

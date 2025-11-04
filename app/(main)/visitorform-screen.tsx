@@ -108,7 +108,7 @@ export default function VisitorFormScreen() {
 
   const { fontScale } = useWindowDimensions();
   const mobileFontSize = 14;
-  const tabletFontSize = 17;
+  const tabletFontSize = 20;
   const { windowWidth, windowHeight, isLandscape, isTablet, screenHeight } =
     useResponsiveDimensions();
   const responsiveFontSize = isTablet
@@ -467,14 +467,14 @@ export default function VisitorFormScreen() {
       alignItems: "center",
     },
     noResultsText: {
-      fontSize: responsiveFontSize,
+      fontSize: 20,
       color: "#6c757d",
       fontFamily: "OpenSans_Condensed-Regular",
       textAlign: "center",
       fontWeight: "500",
     },
     noResultsSubText: {
-      fontSize: responsiveFontSize - 1,
+      fontSize: 19,
       color: "#adb5bd",
       fontFamily: "OpenSans_Condensed-Regular",
       textAlign: "center",
@@ -485,14 +485,14 @@ export default function VisitorFormScreen() {
       marginRight: 8,
     },
     dropdownText: {
-      fontSize: responsiveFontSize,
+      fontSize: 20,
       color: "#03045E",
       fontFamily: "OpenSans_Condensed-Regular",
       fontWeight: "500",
       marginBottom: 2,
     },
     dropdownIdText: {
-      fontSize: responsiveFontSize - 1,
+      fontSize: 19,
       color: "#6c757d",
       fontFamily: "OpenSans_Condensed-Regular",
     },

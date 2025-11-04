@@ -153,16 +153,6 @@ const FaceDetectionCamera: React.FC = () => {
   const [photoHasFace, setPhotoHasFace] = useState<boolean>(false);
   const [isValidating, setIsValidating] = useState(false);
 
-  // useEffect(() => {
-  //   ScreenOrientation.unlockAsync(); // allow rotation
-
-  //   return () => {
-  //     ScreenOrientation.lockAsync(
-  //       ScreenOrientation.OrientationLock.PORTRAIT_UP
-  //     );
-  //   };
-  // }, []);
-
   const { detectFaces } = useFaceDetector({
     performanceMode: "fast",
     landmarkMode: "none", // No landmarks needed
@@ -189,16 +179,6 @@ const FaceDetectionCamera: React.FC = () => {
 
   // Camera setup
   const device = useCameraDevice("front");
-  // Pick the smallest HD or lower format (≤720p)
-  const format = useMemo(() => {
-    if (!device || !device.formats?.length) return undefined;
-
-    return device.formats
-      .filter((f) => f.videoWidth <= 1280 && f.videoHeight <= 720)
-      .sort(
-        (a, b) => a.videoWidth * a.videoHeight - b.videoWidth * b.videoHeight
-      )[0];
-  }, [device]);
 
   // Hide status bar
   useEffect(() => {
@@ -220,13 +200,11 @@ const FaceDetectionCamera: React.FC = () => {
   }, []);
 
   // Face detection callback - simplified and more reliable
-
-  // Face detection callback - simplified and more reliable
   const onFaceDetected = useCallback(
     (faces: Face[]) => {
       const timestamp = Date.now();
 
-      // Log entry conditions
+      // Log entry condition
       if (
         hasTakenPhotoRef.current ||
         isTakingPicture ||
@@ -316,7 +294,7 @@ const FaceDetectionCamera: React.FC = () => {
     const now = Date.now();
 
     // Log throttling
-    if (now - lastProcess.current < 50) {
+    if (now - lastProcess.current < 400) {
       // Uncomment for very detailed throttling logs (can be noisy)
       // console.log(`[${now}] ⏱️ Frame throttled, last: ${now - lastProcess.current}ms ago`);
       return;
@@ -398,6 +376,20 @@ const FaceDetectionCamera: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const orientationFixTimeout = setTimeout(() => {
+      console.log("🔄 Forcing camera remount to align orientation...");
+      setShowCamera(false);
+
+      setTimeout(() => {
+        setShowCamera(true);
+        console.log("✅ Camera orientation re-initialized");
+      }, 300); // small delay before re-render
+    }, 1500); // run ~1.5s after mount (after countdown starts)
+
+    return () => clearTimeout(orientationFixTimeout);
+  }, []);
+
   // Handle the countdown separately
   useEffect(() => {
     if (countdown > 0) {
@@ -424,7 +416,7 @@ const FaceDetectionCamera: React.FC = () => {
     return () => {
       // Explicitly release camera resources
       cameraRef.current = null;
-      //setShowCamera(false);
+      setShowCamera(false);
 
       // Clear all refs and timeouts
       hasTakenPhotoRef.current = false;
@@ -1098,7 +1090,7 @@ const FaceDetectionCamera: React.FC = () => {
       marginTop: isLandscape ? 20 : 40,
       marginBottom: isLandscape ? 15 : 30,
       width: isLandscape ? "100%" : "40%", // Responsive width
-      height: 36, // Responsive height
+      minHeight: 36,
       flexDirection: "row",
       justifyContent: "center",
       gap: 10,
@@ -1111,7 +1103,8 @@ const FaceDetectionCamera: React.FC = () => {
       marginTop: isLandscape ? 20 : 40,
       marginBottom: isLandscape ? 15 : 30,
       width: isLandscape ? "80%" : "30%",
-      height: 36, // Responsive height
+      minHeight: 36,
+
       flexDirection: "row",
       justifyContent: "center",
       gap: 10,
@@ -1184,6 +1177,7 @@ const FaceDetectionCamera: React.FC = () => {
                       ref={cameraRef}
                       zoom={isTablet ? 0.6 : 0.4}
                       style={styles.camera}
+                      androidPreviewViewType="texture-view"
                       device={device}
                       photoQualityBalance="speed"
                       preview={true}

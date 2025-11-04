@@ -34,11 +34,23 @@ export const companiesSchema = tableSchema({
   ],
 });
 
+export const LogSchema = tableSchema({
+  name: "logs",
+  columns: [
+    { name: "level", type: "string" },
+    { name: "message", type: "string" },
+    { name: "timestamp", type: "string" },
+    { name: "metadata", type: "string" },
+    { name: "synced", type: "boolean" },
+  ],
+});
+
 // Final Schema
 const schema = appSchema({
-  version: 19, // Increment version
+  version: 20, // Increment version
   tables: [
     visitorSchema,
+    LogSchema,
     companiesSchema, // ✅ Add this
     tableSchema({
       name: "users",

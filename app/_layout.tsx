@@ -24,7 +24,7 @@ import { UniversalDialogProvider } from "../src/utility/UniversalDialogProvider"
 import database from "./database";
 import Visitor from "./database/models/Visitor";
 import { Q } from "@nozbe/watermelondb";
-
+import NetworkStatusBanner from "../src/utility/NetworkStatusBanner";
 const PERF_LOGGING_ENABLED = __DEV__;
 const LOG_PREFIX = "[ENTRY_PERF]";
 
@@ -173,6 +173,7 @@ export default function Layout() {
             <UniversalDialogProvider>
               <StatusBar hidden={true} />
               <Slot />
+              <NetworkStatusBanner />
             </UniversalDialogProvider>
           </PaperProvider>
         </PermissionProvider>

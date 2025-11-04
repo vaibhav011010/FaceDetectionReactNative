@@ -635,7 +635,6 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                     />
                   ) : null
                 }
-                selectionColor="#03045E"
                 onFocus={() => clearPasswordError()}
               />
               {emailError ? (
@@ -705,7 +704,6 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
                     size={20}
                   />
                 }
-                selectionColor="#03045E"
                 onFocus={() => clearPasswordError()}
               />
               {passwordError ? (

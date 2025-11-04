@@ -26,6 +26,7 @@ import UserProfileIcon from "@/src/utility/UserSvg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { logTableData } from "@/src/utility/logTable";
 import { logAllVisitors } from "@/src/utility/log";
+import { AppLogger } from "@/src/utility/Logger/Logger";
 // Custom hook for responsive dimensions
 
 const useResponsiveDimensions = () => {
@@ -83,6 +84,13 @@ export default function CheckinScreen() {
   const slideAnim = useRef(new Animated.Value(0)).current;
   const nextSlide = useRef(new Animated.Value(windowWidth)).current;
   const currentSlide = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    AppLogger.info("User opened visitor screen", {
+      corporateParkName,
+      module: "VisitorScreen",
+    });
+  }, [corporateParkName]); // dependency ensures latest corporateParkName is used
 
   // Set status bar to hidden when component mounts
   useEffect(() => {

@@ -6,6 +6,7 @@ import UserModel from "./models/User";
 import Company from "./models/Company";
 import migrations from "./migrations";
 import VisitorModel from "./models/Visitor"; // Import Visitor model
+import LogModel from "./models/LogModel";
 
 // SQLite adapter configuration with platform-specific settings
 const adapter = new SQLiteAdapter({
@@ -21,7 +22,7 @@ const adapter = new SQLiteAdapter({
 // Create the database instance
 const database = new Database({
   adapter,
-  modelClasses: [UserModel, VisitorModel, Company],
+  modelClasses: [UserModel, VisitorModel, Company, LogModel],
 });
 
 export default database;

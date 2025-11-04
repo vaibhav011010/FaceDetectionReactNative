@@ -10,7 +10,7 @@ import { AppState, AppStateStatus } from "react-native";
 import * as Crypto from "expo-crypto";
 import { getCurrentUserId } from "./auth";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
-import { safePost } from "@/src/utility/network";
+import { AppLogger } from "@/src/utility/Logger/Logger";
 
 // Use the relative endpoint as baseURL is set in axiosInstance
 const API_ENDPOINT = "/visitors/add_visitor/";
@@ -317,7 +317,7 @@ export const submitVisitor = async (
         visitor.recordUuid = recordUuid;
         visitor.createdDatetime = createdDatetime;
 
-        // Mark as unsynced since it hasn’t gone to the server yet
+        // Mark as unsynced since it hasn't gone to the server yet
         visitor.isSynced = false;
         visitor.visitorSyncStatus = "not_synced";
         visitor.serverId = null;
@@ -325,10 +325,33 @@ export const submitVisitor = async (
     });
 
     console.log("✅ Visitor stored offline successfully");
+
+    // ✅ Log successful visitor creation
+    await AppLogger.info("Visitor created in databse", {
+      visitor_name: visitorName,
+      visitor_mobile_no: visitorMobileNo,
+      record_uuid: recordUuid,
+      visiting_tenant_id: visitingTenantId,
+      created_datetime: createdDatetime,
+      created_by: currentUserId,
+      has_photo: !!imageFilePath,
+      sync_status: "not_synced",
+    });
+
     return { success: true, data: { recordUuid } };
   } catch (error: unknown) {
     console.error("❌ Error while storing visitor offline:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // ✅ Log the error with context
+    await AppLogger.error("Failed to create visitor offline", {
+      record_uuid: recordUuid,
+      visitor_name: visitorName, // Safe to log name for debugging
+      visiting_tenant_id: visitingTenantId,
+      error_message: errorMessage,
+      error_stack: error instanceof Error ? error.stack : undefined,
+    });
+
     return { success: false, error: errorMessage };
   }
 };
@@ -782,10 +805,15 @@ export const syncVisitors = async (): Promise<{
     }
 
     console.log(`Found ${unsyncedVisitors.length} visitors to sync`);
+    // ✅ Log sync start with details
+    await AppLogger.info("Visitor sync started", {
+      unsynced_count: unsyncedVisitors.length,
+      user_id: currentUserId,
+    });
 
     let syncedCount = 0;
     let failedCount = 0;
-
+    const failedVisitors: any[] = [];
     // Process in batches of 5 to avoid memory issues
     const totalRecords = unsyncedVisitors.length;
     const BATCH_SIZE = totalRecords > 100 ? 20 : totalRecords > 50 ? 10 : 5;
@@ -828,6 +856,10 @@ export const syncVisitors = async (): Promise<{
             console.warn(
               `[SYNC] Skipping visitor ${visitor.id} due to invalid payload`
             );
+            await AppLogger.error("Invalid visitor payload for sync", {
+              record_uuid: visitor.recordUuid,
+              visitor_name: visitor.visitorName,
+            });
             return false;
           }
 
@@ -864,8 +896,25 @@ export const syncVisitors = async (): Promise<{
                 if (serverId) v.serverId = serverId;
               });
             });
+            const updatedVisitor = await database
+              .get<Visitor>("visitors")
+              .find(visitor.id);
 
-            console.log(`✅ Synced visitor ${visitor.recordUuid}`);
+            await AppLogger.info("Visitor synced successfully", {
+              record_uuid: updatedVisitor.recordUuid,
+              visitor_name: updatedVisitor.visitorName,
+              visitor_mobile_no: updatedVisitor.visitorMobileNo,
+              visiting_tenant_id: updatedVisitor.visitingTenantId,
+              created_by_user_id: updatedVisitor.createdByUserId,
+              created_datetime: updatedVisitor.createdDatetime,
+              visitor_photo_path: updatedVisitor.visitorPhoto,
+              visitor_photo_name: updatedVisitor.visitorPhotoName,
+              server_id: updatedVisitor.serverId,
+              synced_at: new Date().toISOString(),
+              sync_status: updatedVisitor.visitorSyncStatus,
+              is_synced: updatedVisitor.isSynced,
+            });
+
             return true;
           } else {
             throw new Error(
@@ -892,6 +941,10 @@ export const syncVisitors = async (): Promise<{
                 v.lastSyncAttempt = null;
               });
             });
+            await AppLogger.info("Visitor already exists on server", {
+              record_uuid: visitor.recordUuid,
+              visitor_name: visitor.visitorName,
+            });
 
             return true; // This is a success!
           }
@@ -908,6 +961,26 @@ export const syncVisitors = async (): Promise<{
             response?: { data?: any; status?: number };
             message: string;
           };
+          await AppLogger.error("Visitor sync failed", {
+            record_uuid: visitor.recordUuid,
+            visitor_name: visitor.visitorName,
+            tenant_id: visitor.visitingTenantId,
+            retry_count: (visitor.syncRetryCount ?? 0) + 1,
+            error_code: axiosError.response?.status || "NETWORK_ERROR",
+            error_message: axiosError.message,
+            error_data: JSON.stringify(axiosError.response?.data),
+          });
+
+          // ✅ Collect for reportSyncIssues
+          failedVisitors.push({
+            uuid: visitor.recordUuid,
+            name: visitor.visitorName,
+            mobile: visitor.visitorMobileNo,
+            tenantId: visitor.visitingTenantId,
+            created: visitor.createdDatetime,
+            syncStatus: "error",
+            synced: false,
+          });
 
           const errors = axiosError.response?.data?.errors;
           if (Array.isArray(errors)) {
@@ -947,9 +1020,26 @@ export const syncVisitors = async (): Promise<{
     console.log(
       `🏁 Sync completed: ${syncedCount} synced, ${failedCount} failed`
     );
+    await AppLogger.info("Visitor sync completed", {
+      total_attempted: unsyncedVisitors.length,
+      synced_count: syncedCount,
+      failed_count: failedCount,
+      batch_size: BATCH_SIZE,
+    });
+
+    if (failedVisitors.length > 0) {
+      await AppLogger.reportSyncIssues(failedVisitors);
+    }
+
     return { success: true, syncedCount, failedCount };
   } catch (error) {
     console.error("Error during visitor sync:", error);
+    // ✅ Log overall sync process failure
+    await AppLogger.error("Visitor sync process failed", {
+      error_message: error instanceof Error ? error.message : String(error),
+      error_stack: error instanceof Error ? error.stack : undefined,
+    });
+
     return { success: false, syncedCount: 0, failedCount: 0 };
   }
 };

@@ -8,4 +8,5 @@ export default class Company extends Model {
   @text("tenant_name") tenantName!: string;
   @field("tenant_unit_number") tenantUnitNumber!: string;
   @text("user_id") userId!: string;
+  @field("is_active") isActive!: boolean;
 }

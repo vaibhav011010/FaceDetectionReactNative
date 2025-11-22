@@ -11,10 +11,23 @@ import * as Crypto from "expo-crypto";
 import { getCurrentUserId } from "./auth";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import { AppLogger } from "@/src/utility/Logger/Logger";
+import NetworkManager from "@/src/utility/networkHandeling/NetworkManager";
+import { useSelector } from "react-redux";
+import { RootState, store } from "../store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Use the relative endpoint as baseURL is set in axiosInstance
 const API_ENDPOINT = "/visitors/add_visitor/";
 const VISITOR_IMAGES_DIR = `${FileSystem.documentDirectory}visitor_images`;
+export const getCorporateParkId = (): number | null => {
+  const state = store.getState();
+  return state.global?.corporateParkId ?? null;
+};
+
+export const getBuildingId = (): number | null => {
+  const state = store.getState();
+  return state.global?.buildingId ?? null;
+};
 
 // Timer reference for sync
 let syncIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -849,7 +862,8 @@ export const syncVisitors = async (): Promise<{
           );
           // Don’t block, just use longer backoff
         }
-
+        const startTime = Date.now();
+        let requestSucceeded = false;
         try {
           const visitorData = await prepareVisitorForSync(visitor);
           if (!visitorData) {
@@ -878,6 +892,9 @@ export const syncVisitors = async (): Promise<{
             visitorData,
             {}
           );
+          const responseTime = Date.now() - startTime;
+          requestSucceeded = response.status === 200 || response.status === 201;
+          //   NetworkManager.reportRequestResult(requestSucceeded, responseTime);
 
           if (response.status === 200 || response.status === 201) {
             const serverId =
@@ -899,22 +916,22 @@ export const syncVisitors = async (): Promise<{
             const updatedVisitor = await database
               .get<Visitor>("visitors")
               .find(visitor.id);
-
-            await AppLogger.info("Visitor synced successfully", {
-              record_uuid: updatedVisitor.recordUuid,
-              visitor_name: updatedVisitor.visitorName,
-              visitor_mobile_no: updatedVisitor.visitorMobileNo,
-              visiting_tenant_id: updatedVisitor.visitingTenantId,
-              created_by_user_id: updatedVisitor.createdByUserId,
-              created_datetime: updatedVisitor.createdDatetime,
-              visitor_photo_path: updatedVisitor.visitorPhoto,
-              visitor_photo_name: updatedVisitor.visitorPhotoName,
-              server_id: updatedVisitor.serverId,
-              synced_at: new Date().toISOString(),
-              sync_status: updatedVisitor.visitorSyncStatus,
-              is_synced: updatedVisitor.isSynced,
-            });
-
+            await AppLogger.reportSyncIssues([
+              {
+                uuid: updatedVisitor.recordUuid,
+                name: updatedVisitor.visitorName,
+                mobile: updatedVisitor.visitorMobileNo,
+                created: updatedVisitor.createdDatetime,
+                corporateParkId: getCorporateParkId(),
+                buildingId: getBuildingId(),
+                tenantId: updatedVisitor.visitingTenantId,
+                syncStatus: updatedVisitor.visitorSyncStatus,
+                synced: updatedVisitor.isSynced,
+                syncedDatetime: new Date().toISOString(),
+              },
+            ]);
+            console.log("🏢 corporateParkId :", getCorporateParkId());
+            console.log("🏢 building ID:", getBuildingId());
             return true;
           } else {
             throw new Error(
@@ -922,6 +939,8 @@ export const syncVisitors = async (): Promise<{
             );
           }
         } catch (error: any) {
+          const responseTime = Date.now() - startTime;
+          // NetworkManager.reportRequestResult(false, responseTime);
           console.error(
             `❌ [SYNC ERROR] Visitor ${visitor.recordUuid}:`,
             error

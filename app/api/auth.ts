@@ -35,7 +35,13 @@ export const login = async (
   }
   // Destructure the API response
   const { refresh, access, data } = response.data;
-  const { user_detail, corporate_park_detail, role_detail, permission } = data;
+  const {
+    user_detail,
+    corporate_park_detail,
+    role_detail,
+    permission,
+    building_detail,
+  } = data;
 
   const needsPasswordChange = user_detail.change_password === false;
 
@@ -91,6 +97,7 @@ export const login = async (
     refresh,
     user_detail,
     corporate_park_detail,
+    building_detail,
     role_detail,
     permission,
     needsPasswordChange,

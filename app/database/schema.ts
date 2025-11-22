@@ -31,6 +31,7 @@ export const companiesSchema = tableSchema({
     { name: "tenant_name", type: "string" },
     { name: "tenant_unit_number", type: "string" },
     { name: "user_id", type: "string" },
+    { name: "is_active", type: "boolean" },
   ],
 });
 
@@ -47,7 +48,7 @@ export const LogSchema = tableSchema({
 
 // Final Schema
 const schema = appSchema({
-  version: 20, // Increment version
+  version: 21, // Increment version
   tables: [
     visitorSchema,
     LogSchema,

@@ -10,7 +10,9 @@ import { Q } from "@nozbe/watermelondb";
 interface CompanyOption {
   label: string;
   value: string;
-  tenantUnitNumber: string; // Add tenant unit number to the interface
+  tenantUnitNumber: string;
+  isActive?: boolean;
+  userId?: string;
 }
 
 interface VisitorState {
@@ -254,6 +256,7 @@ const saveCompaniesToDB = async (companies: any[], userId: string) => {
             record.tenantName = comp.label;
             record.tenantUnitNumber = comp.tenantUnitNumber; // Save tenant unit number
             record.userId = String(userId);
+            record.isActive = comp.isActive;
           });
         } catch (createError) {
           console.error(`Failed to create company: ${comp.label}`, createError);
@@ -275,7 +278,7 @@ const loadCompaniesFromDB = async (
   try {
     const companiesCollection = database.get("companies");
     const localCompanies = await companiesCollection
-      .query(Q.where("user_id", String(userId)))
+      .query(Q.where("user_id", String(userId)), Q.where("is_active", true))
       .fetch();
 
     console.log(
@@ -287,6 +290,7 @@ const loadCompaniesFromDB = async (
       value: String(comp.tenantId), // Keep main ID as value
       tenantUnitNumber: comp.tenantUnitNumber, // Add tenant unit number
       userId: comp.userId,
+      isActive: comp.isActive,
     }));
   } catch (error) {
     console.error(`Error loading companies from DB for user ${userId}:`, error);
@@ -322,11 +326,13 @@ const backgroundSyncCompanies = async (userId: string, dispatch: any) => {
         id: number;
         tenant_name: string;
         tenant_unit_number: string;
+        status: boolean;
       }) => ({
         label: company.tenant_name,
         value: String(company.id), // Keep main ID
         tenantUnitNumber: company.tenant_unit_number, // Add tenant unit number
         userId: userId,
+        isActive: company.status,
       })
     );
 
@@ -387,18 +393,24 @@ export const loadInitialCompanies =
                 id: number;
                 tenant_name: string;
                 tenant_unit_number: string;
+                status: boolean;
               }) => ({
                 label: company.tenant_name,
                 value: String(company.id), // Keep main ID
                 tenantUnitNumber: company.tenant_unit_number, // Add tenant unit number
                 userId: userId,
+                isActive: company.status,
               })
             );
 
             // Save to database and update state
             await saveCompaniesToDB(mappedCompanies, userId);
-            dispatch(setAllCompanies(mappedCompanies));
-            dispatch(setFilteredCompanies(mappedCompanies));
+
+            const activeCompanies = mappedCompanies.filter(
+              (c: any) => c.isActive
+            );
+            dispatch(setAllCompanies(activeCompanies));
+            dispatch(setFilteredCompanies(activeCompanies));
 
             console.log(
               `Loaded ${mappedCompanies.length} companies from API for user ${userId}`
@@ -428,7 +440,10 @@ const searchCompaniesInDB = async (
   try {
     const companiesCollection = database.get("companies");
     const allUserCompanies = await companiesCollection
-      .query(Q.where("user_id", userId))
+      .query(
+        Q.where("user_id", userId),
+        Q.where("is_active", true) // ✅ Only search in active companies
+      )
       .fetch();
 
     console.log(
@@ -451,9 +466,10 @@ const searchCompaniesInDB = async (
 
     return filteredCompanies.map((comp: any) => ({
       label: comp.tenantName,
-      value: String(comp.tenantId), // Keep main ID
-      tenantUnitNumber: comp.tenantUnitNumber, // Include tenant unit number
+      value: String(comp.tenantId),
+      tenantUnitNumber: comp.tenantUnitNumber,
       userId: comp.userId,
+      isActive: comp.isActive,
     }));
   } catch (error) {
     console.error(`Error searching companies in DB for user ${userId}:`, error);
@@ -547,11 +563,13 @@ export const forceRefreshCompanies =
           id: number;
           tenant_name: string;
           tenant_unit_number: string;
+          status: boolean;
         }) => ({
           label: company.tenant_name,
           value: String(company.id),
           tenantUnitNumber: company.tenant_unit_number,
           userId,
+          isActive: company.status,
         })
       );
 

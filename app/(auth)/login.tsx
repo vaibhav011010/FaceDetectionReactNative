@@ -28,7 +28,11 @@ import { useFonts } from "expo-font";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { setCorporateParkName } from "../store/slices/globalSlice";
+import {
+  setBuildingID,
+  setCorporateParkID,
+  setCorporateParkName,
+} from "../store/slices/globalSlice";
 import { useAppDispatch, useAppSelector } from "../store/hooks";
 import {
   loginStart,
@@ -52,7 +56,9 @@ import { Q } from "@nozbe/watermelondb";
 import { triggerLoginSync } from "../api/visitorForm";
 import { debounce } from "lodash";
 import { withTimeout } from "@/src/utility/withTimeout";
-
+import NetworkManager from "@/src/utility/networkHandeling/NetworkManager";
+import { store } from "../store";
+import { loadInitialCompanies } from "../store/slices/visitorSlice";
 interface LoginFormProps {
   onLogin?: (email: string, password: string) => void;
 }
@@ -161,7 +167,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       });
       return;
     }
-
+    const startTime = Date.now();
     try {
       dispatch(loginStart());
       console.log("loginStart dispatched");
@@ -171,6 +177,12 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         (signal) => login(trimmedEmail, password, { signal }),
         4000
       );
+      const responseTime = Date.now() - startTime;
+      // login() returns a parsed JSON object (with access/refresh tokens), not a Fetch Response,
+      // so use the presence of the access token to determine success.
+      const requestSucceeded = !!(response && (response as any).access);
+      NetworkManager.reportRequestResult(requestSucceeded);
+
       console.log("API response received:", response);
 
       // ✅ Destructure response values immediately
@@ -263,6 +275,21 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
         })
       );
       dispatch(setCorporateParkName(corporate_park_detail.corporate_park_name));
+      dispatch(setCorporateParkID(corporate_park_detail.id));
+      dispatch(setBuildingID(user_detail.building_id));
+
+      console.log("🏢 Fetching companies for user:", user_detail.id);
+      dispatch(loadInitialCompanies(String(user_detail.id)));
+
+      setTimeout(() => {
+        const currentState = store.getState().global;
+        console.log(
+          "🧩 Redux global state after login dispatch:",
+          currentState
+        );
+        console.log("🧩 buildingID:", currentState.buildingId);
+        console.log("🧩 corporateParkId:", currentState.corporateParkId);
+      }, 500);
       console.log("Corporate park name dispatched to global store");
       console.log("loginSuccess dispatched");
       await AsyncStorage.setItem(
@@ -303,6 +330,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       }
       console.log("Navigation complete");
     } catch (error: any) {
+      NetworkManager.reportRequestResult(false);
       console.error("Login failed:", error.toJSON ? error.toJSON() : error);
       const netState = await NetInfo.fetch();
       const networkIssue =

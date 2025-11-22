@@ -2,6 +2,8 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 interface GlobalState {
   corporateParkName: string;
+  corporateParkId: number | null;
+  buildingId: number | null;
   // Add more global properties as needed, e.g.:
   // theme: "light" | "dark";
   // language: string;
@@ -9,6 +11,8 @@ interface GlobalState {
 
 const initialState: GlobalState = {
   corporateParkName: "",
+  corporateParkId: null,
+  buildingId: null,
   // theme: "light",
   // language: "en",
 };
@@ -20,12 +24,17 @@ const globalSlice = createSlice({
     setCorporateParkName: (state, action: PayloadAction<string>) => {
       state.corporateParkName = action.payload;
     },
-    // Add more reducers as needed, e.g.:
-    // setTheme: (state, action: PayloadAction<"light" | "dark">) => {
-    //   state.theme = action.payload;
-    // },
+    setCorporateParkID: (state, action: PayloadAction<number>) => {
+      state.corporateParkId = action.payload;
+    },
+    setBuildingID(state, action: PayloadAction<number>) {
+      // ✅ new
+      state.buildingId = action.payload;
+    },
+    // you can add other reducers later if needed
   },
 });
 
-export const { setCorporateParkName } = globalSlice.actions;
+export const { setCorporateParkName, setCorporateParkID, setBuildingID } =
+  globalSlice.actions;
 export default globalSlice.reducer;

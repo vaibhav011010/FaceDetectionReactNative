@@ -5,7 +5,7 @@ import { Q } from "@nozbe/watermelondb";
 import database from "../../../app/database";
 import Log from "../../../app/database/models/LogModel";
 
-const BASE_URL = "https://webapptest3.online/mobile";
+const BASE_URL = "https://quikcheckapi.site/mobile";
 const OLD_LOG_CUTOFF_DAYS = 30;
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 200; // NEW: Prevent huge server payloads
@@ -18,12 +18,13 @@ interface SyncIssueRecord {
   uuid: string;
   name: string;
   mobile: string;
-  corporateParkId: number;
-  buildingId: number;
+  corporateParkId: number | null;
+  buildingId: number | null;
   tenantId: number;
   created: string;
   syncStatus: string;
   synced: boolean;
+  syncedDatetime: string | null;
 }
 
 class Logger {
@@ -173,7 +174,7 @@ class Logger {
     }
   }
   async reportSyncIssues(records: SyncIssueRecord[]) {
-    if (__DEV__ || !records?.length) return;
+    if (!records?.length) return;
 
     try {
       const netState = await NetInfo.fetch();
@@ -188,7 +189,7 @@ class Logger {
       });
 
       if (res.status === 200 || res.status === 201) {
-        console.log("✅ Sync issues reported successfully");
+        console.log("✅ Sync issues reported successfully:", res.data);
       } else {
         console.warn(
           `⚠️ Unexpected response while reporting sync issues: ${res.status}`

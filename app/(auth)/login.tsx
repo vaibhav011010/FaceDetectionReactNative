@@ -180,8 +180,8 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       const responseTime = Date.now() - startTime;
       // login() returns a parsed JSON object (with access/refresh tokens), not a Fetch Response,
       // so use the presence of the access token to determine success.
-      const requestSucceeded = !!(response && (response as any).access);
-      NetworkManager.reportRequestResult(requestSucceeded);
+      // const requestSucceeded = !!(response && (response as any).access);
+      // NetworkManager.reportRequestResult(requestSucceeded);
 
       console.log("API response received:", response);
 
@@ -330,7 +330,7 @@ const LoginScreen: React.FC<LoginFormProps> = ({ onLogin }) => {
       }
       console.log("Navigation complete");
     } catch (error: any) {
-      NetworkManager.reportRequestResult(false);
+      //  NetworkManager.reportRequestResult(false);
       console.error("Login failed:", error.toJSON ? error.toJSON() : error);
       const netState = await NetInfo.fetch();
       const networkIssue =
